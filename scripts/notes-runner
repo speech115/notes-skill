@@ -72,13 +72,13 @@ def ensure_audio_transcription_available(feature_name: str) -> None:
         return
     if os.environ.get("ELEVENLABS_API_KEY"):
         return
-    if is_macos() and mlx_whisper_available():
+    if is_macos() and (mlx_whisper_available() or parakeet_available()):
         return
     if is_macos():
         raise FileNotFoundError(
             advanced_setup_message(
                 feature_name,
-                "Install mlx-whisper (`pip install mlx-whisper`) or set GROQ_API_KEY (free at console.groq.com)",
+                "Install parakeet-mlx (`pip install parakeet-mlx`) or mlx-whisper, or set GROQ_API_KEY (free at console.groq.com)",
             )
         )
     raise FileNotFoundError(
@@ -708,6 +708,27 @@ def transcript_markdown_from_cues(cues: list[dict]) -> str:
     return "\n".join(lines).rstrip() + "\n" if lines else ""
 
 
+def parakeet_available() -> bool:
+    """Check if parakeet-mlx is importable."""
+    return python_module_available("parakeet_mlx")
+
+
+def call_parakeet_transcribe(audio_path: Path, language: str | None = None) -> str:
+    """Transcribe using parakeet-mlx, return transcript markdown."""
+    from parakeet_mlx import from_pretrained  # type: ignore[import-untyped]
+
+    model = from_pretrained("mlx-community/parakeet-tdt-0.6b-v3")
+    result = model.transcribe(str(audio_path))
+
+    lines = []
+    for sentence in result.sentences:
+        ts = format_mmss(sentence.start)
+        text = sentence.text.strip()
+        if text:
+            lines.append(f"*{ts}* {text}")
+    return "\n".join(lines).rstrip() + "\n" if lines else ""
+
+
 def choose_transcribe_backend(choice: str) -> str:
     normalized = choice.strip().lower()
     if normalized != "auto":
@@ -716,9 +737,11 @@ def choose_transcribe_backend(choice: str) -> str:
         return "groq"
     if os.environ.get("ELEVENLABS_API_KEY"):
         return "elevenlabs"
+    if is_macos() and parakeet_available():
+        return "parakeet"
     hint = "Set GROQ_API_KEY (free at console.groq.com) or ELEVENLABS_API_KEY."
     if is_macos():
-        hint += " Or install mlx-whisper for local transcription: pip install mlx-whisper"
+        hint += " Or install parakeet-mlx / mlx-whisper for local transcription."
     raise ValueError(hint)
 
 
@@ -2181,6 +2204,16 @@ def _cmd_audio_inner(
             "language": language_hint or "auto",
             "raw_json": str(raw_json_path),
         }
+    elif api_backend == "parakeet":
+        language_hint = normalize_language_hint(args.language) if hasattr(args, "language") else "ru"
+        print("Transcribing with Parakeet v3 (MLX)...", file=sys.stderr)
+        raw_markdown = call_parakeet_transcribe(audio_path, language=language_hint)
+        write_text(transcript_path, normalize_transcript_text(raw_markdown))
+        transcript_source = {
+            "kind": "parakeet",
+            "model": "parakeet-tdt-0.6b-v3",
+            "language": language_hint or "auto",
+        }
     elif api_backend in ("deepgram", "openai"):
         raw_json_path = bundle_dir / "api_output.json"
         language_hint = normalize_language_hint(args.language) if hasattr(args, "language") else "ru"
@@ -3551,6 +3584,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     checks["ELEVENLABS_API_KEY"] = bool(os.environ.get("ELEVENLABS_API_KEY"))
 
     # Optional Python modules
+    checks["parakeet_mlx"] = parakeet_available() if is_macos() else "n/a (macOS only)"
     checks["mlx_whisper"] = mlx_whisper_available() if is_macos() else "n/a (macOS only)"
     checks["whisperx"] = shutil.which("whisperx") is not None
     checks["youtube_transcript_api"] = python_module_available("youtube_transcript_api")
@@ -3562,7 +3596,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     has_audio = (
         checks.get("GROQ_API_KEY", False)
         or checks.get("ELEVENLABS_API_KEY", False)
-        or (is_macos() and checks.get("mlx_whisper") is True)
+        or (is_macos() and (checks.get("parakeet_mlx") is True or checks.get("mlx_whisper") is True))
     )
     checks["audio_transcription_ready"] = has_audio
 
