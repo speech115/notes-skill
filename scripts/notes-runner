@@ -61,13 +61,18 @@ def is_macos() -> bool:
     return sys.platform == "darwin"
 
 
+def mlx_whisper_available() -> bool:
+    """Check if mlx_whisper is available as Python module OR CLI binary."""
+    return python_module_available("mlx_whisper") or shutil.which("mlx_whisper") is not None
+
+
 def ensure_audio_transcription_available(feature_name: str) -> None:
     """Check that at least one transcription backend is available."""
     if os.environ.get("GROQ_API_KEY"):
         return
     if os.environ.get("ELEVENLABS_API_KEY"):
         return
-    if is_macos() and python_module_available("mlx_whisper"):
+    if is_macos() and mlx_whisper_available():
         return
     if is_macos():
         raise FileNotFoundError(
@@ -2153,7 +2158,7 @@ def _cmd_audio_inner(
                 "raw_json": str(raw_json_path),
             }
         except (RateLimitError, ValueError) as exc:
-            if is_macos() and python_module_available("mlx_whisper"):
+            if is_macos() and mlx_whisper_available():
                 print(f"Groq failed ({exc}), falling back to MLX Whisper...", file=sys.stderr)
                 api_backend = None  # fall through to mlx_whisper block below
             else:
@@ -3546,7 +3551,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     checks["ELEVENLABS_API_KEY"] = bool(os.environ.get("ELEVENLABS_API_KEY"))
 
     # Optional Python modules
-    checks["mlx_whisper"] = python_module_available("mlx_whisper") if is_macos() else "n/a (macOS only)"
+    checks["mlx_whisper"] = mlx_whisper_available() if is_macos() else "n/a (macOS only)"
     checks["whisperx"] = shutil.which("whisperx") is not None
     checks["youtube_transcript_api"] = python_module_available("youtube_transcript_api")
 
