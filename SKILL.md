@@ -140,6 +140,10 @@ Goal: keep `/notes` deterministic. Prefer the runner state over ad-hoc decisions
 - If `$PREPARE_REUSED == true`, assume this is a resume/continue path and skip any stage already marked ready in `$STATUS`.
 - Valid YouTube transcript sources are: `existing`, `youtube-transcript-api`, `subtitles`, `api`. `api` means the slower audio fallback ran; it is not an error by itself.
 - Do not use `ToolSearch` or `mcp__telegram__send_file` from this skill. Telegram is best-effort inside `assemble` only.
+- Prefer richer coverage over aggressive compression for long-form material. A 90-180 minute source should usually produce many local blocks, not a handful of mega-blocks.
+- Treat runner-provided density requirements as hard constraints. If the extraction prompt says the chunk must yield at least `N` blocks, do not collapse it further.
+- If assemble reports that the note is too compressed for source duration, treat that as a real contract failure and expand the coverage instead of polishing wording.
+- For `120+` minute sources, default to a deep-longform reading mode: preserve intermediate conclusions, participant situations, and concrete examples instead of flattening them into generic theses.
 
 ### Read only required files
 

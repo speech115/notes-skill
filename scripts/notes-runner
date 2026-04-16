@@ -827,6 +827,39 @@ def total_duration_seconds_for_meta(meta: list[FileMeta]) -> int:
     return 0
 
 
+def duration_seconds_override_from_source_hints(source_hints: dict | None) -> int:
+    if not isinstance(source_hints, dict):
+        return 0
+    raw = source_hints.get("duration_seconds")
+    try:
+        seconds = int(float(raw))
+    except (TypeError, ValueError):
+        return 0
+    return max(0, seconds)
+
+
+def format_duration_hhmmss(seconds_value: object) -> str:
+    try:
+        total_seconds = max(0, int(float(seconds_value)))
+    except (TypeError, ValueError):
+        return "unknown"
+    hours, rem = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(rem, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}" if hours > 0 else f"{minutes:02d}:{seconds:02d}"
+
+
+def effective_duration_seconds_for_meta(meta: list[FileMeta], source_hints: dict | None = None) -> int:
+    override = duration_seconds_override_from_source_hints(source_hints)
+    return override if override > 0 else total_duration_seconds_for_meta(meta)
+
+
+def effective_duration_estimate_for_meta(meta: list[FileMeta], source_hints: dict | None = None) -> str:
+    override = duration_seconds_override_from_source_hints(source_hints)
+    if override > 0:
+        return format_duration_hhmmss(override)
+    return next((item.duration_estimate for item in reversed(meta) if item.duration_estimate), "unknown")
+
+
 def format_label_for_content_mode(content_mode: str) -> str:
     return {
         "monologue": "лекция",
@@ -842,14 +875,128 @@ def tldr_bounds_for(content_mode: str, duration_seconds: int, total_chunks: int)
             return (5, 6)
         if minutes and minutes <= 35:
             return (6, 8)
+        if minutes and minutes >= 150:
+            return (12, 16)
+        if minutes and minutes >= 90:
+            return (10, 14)
         return (7, 9) if total_chunks <= 3 else (8, 10)
     if content_mode == "conversation":
         if minutes and minutes <= 30:
             return (6, 8)
+        if minutes and minutes >= 150:
+            return (12, 16)
+        if minutes and minutes >= 90:
+            return (10, 14)
         return (7, 10)
+    if minutes and minutes >= 150:
+        return (13, 18)
+    if minutes and minutes >= 90:
+        return (11, 15)
     if minutes and minutes <= 35:
         return (7, 9)
     return (8, 12)
+
+
+def block_contract_for(duration_seconds: int, content_mode: str) -> dict:
+    contract = {
+        "theses_min": 5,
+        "theses_max": 8,
+        "meaning_section": "optional",
+        "detail_profile": "standard",
+        "case_section": "optional",
+        "quote_max_per_block": 1,
+        "deep_longform": {
+            "enabled": False,
+            "min_meaning_blocks_floor": 0,
+            "min_meaning_blocks_ratio": 0.0,
+            "min_case_blocks_floor": 0,
+            "min_case_blocks_ratio": 0.0,
+        },
+    }
+    minutes = duration_seconds / 60 if duration_seconds > 0 else 0
+    if minutes >= 60:
+        contract["theses_min"] = 6
+        contract["theses_max"] = 9
+        contract["meaning_section"] = "preferred"
+    if minutes >= 90:
+        contract["theses_min"] = 7
+        contract["theses_max"] = 10 if content_mode == "workshop" else 9
+        contract["meaning_section"] = "expected"
+    if minutes >= 120:
+        contract["theses_min"] = 7
+        contract["theses_max"] = 11 if content_mode == "workshop" else 10
+        contract["meaning_section"] = "expected"
+        contract["detail_profile"] = "deep_longform"
+        contract["case_section"] = "preferred"
+        contract["deep_longform"] = {
+            "enabled": True,
+            "min_meaning_blocks_floor": 4,
+            "min_meaning_blocks_ratio": 0.75,
+            "min_case_blocks_floor": 2 if content_mode == "monologue" else 4 if content_mode == "workshop" else 3,
+            "min_case_blocks_ratio": 0.2 if content_mode == "monologue" else 0.3 if content_mode == "workshop" else 0.25,
+        }
+    if minutes >= 150:
+        contract["deep_longform"] = {
+            "enabled": True,
+            "min_meaning_blocks_floor": 5,
+            "min_meaning_blocks_ratio": 0.8,
+            "min_case_blocks_floor": 3 if content_mode == "monologue" else 5 if content_mode == "workshop" else 4,
+            "min_case_blocks_ratio": 0.25 if content_mode == "monologue" else 0.35 if content_mode == "workshop" else 0.3,
+        }
+    return contract
+
+
+def detail_density_targets_for(duration_seconds: int, content_mode: str) -> dict:
+    minutes = duration_seconds / 60 if duration_seconds > 0 else 0
+    if minutes >= 150:
+        return {"min_blocks_per_10min": 0.85, "min_words_per_min": 24}
+    if minutes >= 90:
+        return {"min_blocks_per_10min": 0.75, "min_words_per_min": 20}
+    if minutes >= 45:
+        return {"min_blocks_per_10min": 0.6, "min_words_per_min": 15}
+    if minutes >= 20:
+        return {"min_blocks_per_10min": 0.5, "min_words_per_min": 11}
+    return {"min_blocks_per_10min": 0.0, "min_words_per_min": 0}
+
+
+def deep_longform_targets_for(block_count: int, block_contract: dict) -> dict:
+    payload = block_contract.get("deep_longform") if isinstance(block_contract.get("deep_longform"), dict) else {}
+    enabled = bool(payload.get("enabled"))
+    if not enabled:
+        return {
+            "enabled": False,
+            "min_meaning_blocks": 0,
+            "min_case_blocks": 0,
+        }
+
+    meaning_floor = int(payload.get("min_meaning_blocks_floor") or 0)
+    meaning_ratio = float(payload.get("min_meaning_blocks_ratio") or 0.0)
+    case_floor = int(payload.get("min_case_blocks_floor") or 0)
+    case_ratio = float(payload.get("min_case_blocks_ratio") or 0.0)
+    return {
+        "enabled": True,
+        "min_meaning_blocks": max(meaning_floor, math.ceil(block_count * meaning_ratio)),
+        "min_case_blocks": max(case_floor, math.ceil(block_count * case_ratio)),
+    }
+
+
+def min_blocks_for_chunk(
+    *,
+    extraction_lines: int,
+    estimated_tokens: int,
+    approx_duration_seconds: int,
+    content_mode: str,
+) -> int:
+    minutes = approx_duration_seconds / 60 if approx_duration_seconds > 0 else 0
+    if minutes >= 32 or extraction_lines >= 1200 or estimated_tokens >= 8000:
+        return 4
+    if minutes >= 18 or extraction_lines >= 650 or estimated_tokens >= 4200:
+        return 3
+    if minutes >= 10 or extraction_lines >= 350 or estimated_tokens >= 2200:
+        return 2
+    if content_mode == "monologue" and minutes <= 8 and extraction_lines < 300:
+        return 1
+    return 1
 
 
 def _prepare_classify_content_mode(
@@ -863,7 +1010,7 @@ def _prepare_classify_content_mode(
     total_dialogue_speakers = sum(item.dialogue_speakers for item in files)
     total_intro = sum(item.intro_cues for item in files)
     total_lines = sum(item.lines for item in files)
-    duration_seconds = total_duration_seconds_for_meta(files)
+    duration_seconds = effective_duration_seconds_for_meta(files, source_hints)
     source_kind = str((source_hints or {}).get("source_kind") or "").strip()
     author_hint = _cleanup_person_hint(str((source_hints or {}).get("author_hint") or ""))
     has_author_hint = _is_informative_person_hint(author_hint)
@@ -936,6 +1083,7 @@ def build_note_contract(
     duration_seconds: int,
 ) -> dict:
     tldr_min, tldr_max = tldr_bounds_for(content_mode, duration_seconds, total_chunks)
+    block_contract = block_contract_for(duration_seconds, content_mode)
     author_hint = _cleanup_person_hint(str(header_seed.get("author_hint") or ""))
     required_metadata = ["Формат", "Тема", "Длительность", "Источник"]
     if _is_informative_person_hint(author_hint):
@@ -965,13 +1113,16 @@ def build_note_contract(
             "author_frame_style": "three-bullets",
         },
         "blocks": {
-            "theses_min": 5,
-            "theses_max": 8,
-            "meaning_section": "optional",
+            "theses_min": block_contract["theses_min"],
+            "theses_max": block_contract["theses_max"],
+            "meaning_section": block_contract["meaning_section"],
             "meaning_label": "Смысл блока",
             "case_optional": True,
+            "case_section": block_contract["case_section"],
             "dialogue_optional": content_mode != "monologue",
-            "quote_max_per_block": 1,
+            "quote_max_per_block": block_contract["quote_max_per_block"],
+            "detail_profile": block_contract["detail_profile"],
+            "deep_longform": block_contract["deep_longform"],
         },
         "tldr": {
             "required": True,
@@ -1008,9 +1159,10 @@ def build_prepare_quality_checks(
     source_hints: dict | None = None,
 ) -> dict:
     total_lines = sum(item.lines for item in meta)
-    duration_seconds = total_duration_seconds_for_meta(meta)
+    duration_seconds = effective_duration_seconds_for_meta(meta, source_hints)
     minutes = duration_seconds / 60 if duration_seconds > 0 else 0
     blocks_per_10m = round((len(plan) / minutes) * 10, 2) if minutes > 0 else None
+    density_targets = detail_density_targets_for(duration_seconds, content_mode)
     monologue_fast_path_expected = (
         content_mode == "monologue"
         and str((source_hints or {}).get("source_kind") or "").strip() == "youtube"
@@ -1038,7 +1190,10 @@ def build_prepare_quality_checks(
                 "duration_seconds": duration_seconds,
                 "planned_chunks": len(plan),
                 "content_blocks_per_10min": blocks_per_10m,
-                "ok": blocks_per_10m is None or blocks_per_10m <= 1.8,
+                "min_blocks_per_10min": density_targets["min_blocks_per_10min"],
+                "ok": blocks_per_10m is None or (
+                    density_targets["min_blocks_per_10min"] <= blocks_per_10m <= 1.8
+                ),
             },
             "tldr_bounds": note_contract.get("tldr", {}),
         },
@@ -1441,6 +1596,22 @@ def _groq_transcribe_single(audio_path: Path, *, api_key: str, language: str | N
 class RateLimitError(ValueError):
     """Raised when Groq rate limit is hit, so callers can back off."""
     pass
+
+
+def probe_media_duration_seconds(path: Path) -> int:
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, check=True,
+        )
+    except FileNotFoundError:
+        return 0
+    except subprocess.CalledProcessError:
+        return 0
+    try:
+        return max(0, int(float(probe.stdout.strip())))
+    except ValueError:
+        return 0
 
 
 def _split_audio_ffmpeg(audio_path: Path, output_dir: Path, chunk_seconds: int) -> list[tuple[Path, float]]:
@@ -1863,6 +2034,11 @@ def enrich_work_dir_with_source_hints(work_dir: Path, source_hints: dict | None)
             "source_identity": source_hints,
             "participants_hint": participants_hint or header_seed.get("participants_hint"),
             "title_candidates": deduped_candidates or header_seed.get("title_candidates") or [],
+            "duration_estimate": (
+                format_duration_hhmmss(duration_seconds_override_from_source_hints(source_hints))
+                if duration_seconds_override_from_source_hints(source_hints) > 0
+                else header_seed.get("duration_estimate")
+            ),
         },
     )
     write_json(header_seed_path, merged_header_seed)
@@ -1873,7 +2049,9 @@ def enrich_work_dir_with_source_hints(work_dir: Path, source_hints: dict | None)
     content_mode = str(prepare_state.get("content_mode") or "conversation")
     execution_mode = str(prepare_state.get("execution_mode") or execution_mode_for_plan(0, content_mode=content_mode))
     total_chunks = int(prepare_state.get("total_chunks") or 0)
-    duration_seconds = int((prepare_state.get("telemetry") or {}).get("duration_seconds") or 0) if isinstance(prepare_state.get("telemetry"), dict) else 0
+    duration_seconds = duration_seconds_override_from_source_hints(source_hints)
+    if duration_seconds <= 0:
+        duration_seconds = int((prepare_state.get("telemetry") or {}).get("duration_seconds") or 0) if isinstance(prepare_state.get("telemetry"), dict) else 0
     refreshed_contract = build_note_contract(
         work_dir=work_dir,
         content_mode=content_mode,
@@ -1898,14 +2076,25 @@ def enrich_work_dir_with_source_hints(work_dir: Path, source_hints: dict | None)
     header_prompt_path = prompt_dir / "header.md"
     if header_prompt_path.is_file():
         write_text(header_prompt_path, _prepare_render_header_prompt(work_dir))
+    for chunk in normalize_chunk_plan(prepare_state):
+        chunk_id = str(chunk.get("chunk_id") or chunk.get("id") or "").strip()
+        if not chunk_id:
+            continue
+        chunk_prompt_path = prompt_dir / f"extract-{chunk_id}.md"
+        if chunk_prompt_path.is_file():
+            write_text(chunk_prompt_path, _prepare_render_extraction_prompt(work_dir, chunk, execution_mode))
 
     update_prepare_state_fields(
         work_dir,
         {
+            "duration_estimate": merged_header_seed.get("duration_estimate") or prepare_state.get("duration_estimate"),
             "header_seed": merged_header_seed,
             "title_candidates": merged_header_seed.get("title_candidates") or [],
             "source_identity": source_hints,
             "note_contract": refreshed_contract,
+            "telemetry": {
+                "duration_seconds": duration_seconds,
+            } if duration_seconds > 0 else prepare_state.get("telemetry", {}),
         },
     )
 
@@ -2200,6 +2389,7 @@ def existing_successful_telegram_delivery(
     if previous_sha:
         return previous if previous_sha == current_sha else None
 
+    # Backward-compatible fallback for older run.json files written before file hashes existed.
     return previous
 
 
@@ -3295,6 +3485,10 @@ def _cmd_audio_inner(
     transcript_path = paths["transcript"]
     whisper_json_path = bundle_dir / "whisper_output.json"
     transcript_source: dict[str, object] | None = None
+    source_hints = {
+        "source_kind": "video" if is_video else "audio",
+        "duration_seconds": probe_media_duration_seconds(source_path),
+    }
 
     use_diarize = getattr(args, "diarize", False)
 
@@ -3454,7 +3648,12 @@ def _cmd_audio_inner(
     }
 
     if args.prepare:
-        prepare_payload = run_prepare_for_transcript(transcript_path, bundle_dir=bundle_dir, refresh=args.refresh)
+        prepare_payload = run_prepare_for_transcript(
+            transcript_path,
+            bundle_dir=bundle_dir,
+            refresh=args.refresh,
+            source_hints=source_hints,
+        )
         attach_prepare_outputs(payload, prepare_payload, bundle_dir)
 
     transcription_duration_ms = ms_since(command_started)
@@ -4245,7 +4444,7 @@ def _prepare_build_header_seed(
 ) -> dict:
     title_candidates = _prepare_build_title_candidates(meta, chapters_loaded, source_hints=source_hints)
     topic_hint = title_candidates[0] if title_candidates else ""
-    duration_hint = next((item.duration_estimate for item in reversed(meta) if item.duration_estimate), "unknown")
+    duration_hint = effective_duration_estimate_for_meta(meta, source_hints)
     source_names = [item.path.name for item in meta]
     source_identity = source_hints if isinstance(source_hints, dict) else {}
     author_hint = str(source_identity.get("author_hint") or "").strip()
@@ -4270,14 +4469,25 @@ def _prepare_build_header_seed(
     }
 
 
-def _prepare_build_chunk_plan(meta: list[FileMeta], speaker_stage: str, *, work_dir: Path, content_mode: str) -> list[dict]:
+def _prepare_build_chunk_plan(
+    meta: list[FileMeta],
+    speaker_stage: str,
+    *,
+    work_dir: Path,
+    content_mode: str,
+    source_hints: dict | None = None,
+) -> list[dict]:
     plan: list[dict] = []
     prompt_dir = work_prompt_dir(work_dir)
     global_index = 0
+    total_override_seconds = duration_seconds_override_from_source_hints(source_hints)
+    total_lines_all = max(1, sum(item.lines for item in meta))
     for file_meta in meta:
         lines = file_meta.lines
         file_lines = _prepare_read_lines(file_meta.path)
         duration_seconds = _parse_duration_to_seconds(file_meta.duration_estimate)
+        if total_override_seconds > 0:
+            duration_seconds = int(round(total_override_seconds * (lines / total_lines_all)))
         chunks = _prepare_chunk_count_for(
             lines,
             speaker_stage,
@@ -4306,6 +4516,14 @@ def _prepare_build_chunk_plan(meta: list[FileMeta], speaker_stage: str, *, work_
             chunk_id = _prepare_chunk_label(global_index)
             extraction_lines = file_lines[start - 1:end]
             chunk_token_estimate = _estimate_tokens_from_lines(extraction_lines)
+            extraction_line_count = end - start + 1
+            approx_chunk_duration_seconds = int(round(duration_seconds * (extraction_line_count / max(lines, 1)))) if duration_seconds > 0 else 0
+            min_blocks = min_blocks_for_chunk(
+                extraction_lines=extraction_line_count,
+                estimated_tokens=chunk_token_estimate,
+                approx_duration_seconds=approx_chunk_duration_seconds,
+                content_mode=content_mode,
+            )
             chunk_fingerprint = _prepare_short_hash(
                 "\n".join(
                     [
@@ -4332,6 +4550,8 @@ def _prepare_build_chunk_plan(meta: list[FileMeta], speaker_stage: str, *, work_
                     "chunk_size": chunk_size,
                     "overlap": overlap,
                     "estimated_tokens": chunk_token_estimate,
+                    "approx_duration_seconds": approx_chunk_duration_seconds,
+                    "min_blocks": min_blocks,
                     "chunk_fingerprint": chunk_fingerprint,
                     "prompt_path": str(prompt_dir / f"extract-{chunk_id}.md"),
                     "stage_sentinel_path": str(stage_sentinel_path(work_dir, "extraction", chunk_id=chunk_id)),
@@ -4426,10 +4646,11 @@ def _prepare_build_report(
     speaker_reason: str,
     prescan_limit: int,
     plan: list[dict],
+    source_hints: dict | None = None,
 ) -> str:
     total_lines = sum(item.lines for item in meta)
     total_chunks = len(plan)
-    duration_estimate = next((item.duration_estimate for item in reversed(meta) if item.duration_estimate), "unknown")
+    duration_estimate = effective_duration_estimate_for_meta(meta, source_hints)
     speaker_markers = sorted(
         {f"Speaker {marker}" for item in meta for marker in SPEAKER_MARKER_RE.findall("\n".join(_prepare_read_lines(item.path)))}
     )
@@ -4524,9 +4745,47 @@ def _prepare_render_speaker_prompt(work_dir: Path) -> str:
 
 
 def _prepare_render_extraction_prompt(work_dir: Path, chunk: dict, execution_mode: str) -> str:
-    chunk_id = chunk["chunk_id"]
+    chunk_id = str(chunk.get("chunk_id") or chunk.get("id") or "").strip()
+    if not chunk_id:
+        raise KeyError("chunk_id")
     sentinel_path = chunk["stage_sentinel_path"]
     expected_outputs = chunk.get("expected_outputs") or []
+    note_contract = load_json_if_exists(note_contract_path(work_dir)) or {}
+    block_contract = note_contract.get("blocks") if isinstance(note_contract.get("blocks"), dict) else {}
+    theses_min = int(block_contract.get("theses_min") or 5)
+    theses_max = int(block_contract.get("theses_max") or 8)
+    meaning_section = str(block_contract.get("meaning_section") or "optional").strip()
+    case_section = str(block_contract.get("case_section") or "optional").strip()
+    detail_profile = str(block_contract.get("detail_profile") or "standard").strip()
+    quote_max_per_block = int(block_contract.get("quote_max_per_block") or 1)
+    min_blocks = max(1, int(chunk.get("min_blocks") or 1))
+    approx_duration_seconds = int(chunk.get("approx_duration_seconds") or 0)
+    approx_duration_line = f"APPROX CHUNK DURATION: {format_mmss(approx_duration_seconds)}\n" if approx_duration_seconds > 0 else ""
+    dense_block_rule = (
+        "- One dense block is valid only if the material is genuinely narrow inside this chunk.\n"
+        if min_blocks == 1
+        else "- One dense block is not enough for this chunk even if the material feels coherent.\n"
+    )
+    meaning_rule = (
+        "- `### Смысл блока` is expected for every block and should state the practical implication in one short line.\n"
+        if meaning_section == "expected"
+        else "- `### Смысл блока` is preferred for most blocks and should state the practical implication in one short line when it is clear.\n"
+        if meaning_section == "preferred"
+        else "- `### Смысл блока` is optional and should be one short line only when the block has a clear practical implication.\n"
+    )
+    case_rule = (
+        "- `### Кейс` is preferred whenever the source gives a concrete participant situation, mini-story, before/after shift, or applied example with its own lesson.\n"
+        if case_section == "preferred"
+        else "- Add a short case section only when an example carries a distinct lesson beyond the theses.\n"
+    )
+    profile_rule = (
+        "- This is deep-longform material. Prefer coverage over compression, even when the source feels repetitive at first glance.\n"
+        "- Preserve intermediate conclusions, local turning points, and shifts in the speaker's logic instead of flattening them into one abstract summary.\n"
+        "- If the chunk contains a concrete situation or participant story, surface it as `### Кейс` rather than burying it inside generic theses.\n"
+        "- Blocks in this mode should read like a guided walkthrough of the source, not a compressed essay.\n"
+        if detail_profile == "deep_longform"
+        else ""
+    )
     single_mode_extra = ""
     if execution_mode == "single":
         single_mode_extra = (
@@ -4538,10 +4797,11 @@ def _prepare_render_extraction_prompt(work_dir: Path, chunk: dict, execution_mod
         f"WORK_DIR: {work_dir}\n"
         f"CHUNK_ID: {chunk_id}\n"
         f"FILE: {chunk['file']}\n"
-        f"READ RANGE: lines {chunk['read_start']} to {chunk['read_end']}\n"
+        f"READ RANGE: lines {chunk.get('read_start') or chunk.get('line_start')} to {chunk.get('read_end') or chunk.get('line_end')}\n"
         f"CONTEXT ZONE: {chunk['context_start']} to {chunk['context_end']}\n"
-        f"EXTRACTION ZONE: {chunk['extraction_start']} to {chunk['extraction_end']}\n"
+        f"EXTRACTION ZONE: {chunk.get('extraction_start') or chunk.get('line_start')} to {chunk.get('extraction_end') or chunk.get('line_end')}\n"
         f"TARGET TOKENS: {chunk.get('estimated_tokens') or 'unknown'}\n"
+        f"{approx_duration_line}"
         f"CHUNK FINGERPRINT: {chunk['chunk_fingerprint']}\n"
         f"MODE: {execution_mode}\n\n"
         f"NOTE CONTRACT: {note_contract_path(work_dir)}\n\n"
@@ -4557,17 +4817,19 @@ def _prepare_render_extraction_prompt(work_dir: Path, chunk: dict, execution_mod
         "- Do not invent facts, versions, or tools not present in the source.\n"
         "- Extract only from EXTRACTION ZONE; use CONTEXT ZONE only for orientation.\n"
         "- Split by semantic or chapter boundaries, not by a fixed number of blocks.\n"
-        "- If the chunk is short or semantically narrow, one dense block is valid.\n"
+        f"- This chunk must yield at least {min_blocks} semantically distinct block(s).\n"
+        f"{dense_block_rule}"
         "- Do not create blocks shorter than 5 minutes unless the source naturally ends there.\n"
         "- Each block must be dense and interpretive, not just a sparse paraphrase.\n"
+        f"{profile_rule}"
         "- Give each block a conclusion-style title: what the block proves, changes, or clarifies for the reader.\n"
-        "- Each block should contain 5-8 theses with italic timestamps *(MM:SS)*.\n"
+        f"- Each block should contain {theses_min}-{theses_max} theses with italic timestamps *(MM:SS)*.\n"
         "- Focus on ideas, models, tensions, decisions, warnings, and non-obvious implications.\n"
         "- Skip low-value procedural filler and repetitive phrasing.\n"
-        "- Add a short case section only when an example carries a distinct lesson beyond the theses.\n"
+        f"{case_rule}"
         "- Add a short dialogue section only when the exchange reveals something non-obvious that is lost in plain theses.\n"
-        "- Include at most one memorable verbatim quote per block, only if it is genuinely sharp or revealing.\n"
-        "- `### Смысл блока` is optional and should be one short line only when the block has a clear practical implication.\n"
+        f"- Include at most {quote_max_per_block} memorable verbatim quote per block, only if it is genuinely sharp or revealing.\n"
+        f"{meaning_rule}"
         "- Write exactly one summary_chunk file with 5-7 numbered key ideas from this chunk.\n\n"
         "Each block file should use this structure:\n"
         "---\n"
@@ -4579,7 +4841,7 @@ def _prepare_render_extraction_prompt(work_dir: Path, chunk: dict, execution_mod
         "## [topic] ([timestamp range])\n\n"
         "### Тезисы:\n"
         "1. ... *(MM:SS)*\n"
-        "[5-8 items]\n\n"
+        f"[{theses_min}-{theses_max} items]\n\n"
         "### Кейс: [name]\n"
         "**Контекст:** ...\n"
         "**Что произошло:** ...\n"
@@ -4590,7 +4852,7 @@ def _prepare_render_extraction_prompt(work_dir: Path, chunk: dict, execution_mod
         "**[Speaker name]:** «...»\n"
         "[omit this whole section if no meaningful dialogue]\n\n"
         "> *«Verbatim quote preserving exact language»* — [timestamp]\n"
-        "[max 1 per block]\n\n"
+        f"[max {quote_max_per_block} per block]\n\n"
         "### Смысл блока:\n"
         "...\n"
         "[optional: one short line only if the practical implication is genuinely clear]\n\n"
@@ -4777,8 +5039,14 @@ def run_prepare_logic(input_files: list[Path], *, source_hints: dict | None = No
                 pass
             break
 
-    total_duration_seconds = total_duration_seconds_for_meta(meta)
-    plan = _prepare_build_chunk_plan(meta, speaker_stage, work_dir=work_dir, content_mode=content_mode)
+    total_duration_seconds = effective_duration_seconds_for_meta(meta, source_hints)
+    plan = _prepare_build_chunk_plan(
+        meta,
+        speaker_stage,
+        work_dir=work_dir,
+        content_mode=content_mode,
+        source_hints=source_hints,
+    )
     execution_mode = execution_mode_for_plan(
         len(plan),
         content_mode=content_mode,
@@ -4826,6 +5094,7 @@ def run_prepare_logic(input_files: list[Path], *, source_hints: dict | None = No
         speaker_reason=speaker_reason,
         prescan_limit=prescan_limit,
         plan=plan,
+        source_hints=source_hints,
     )
 
     total_lines = sum(item.lines for item in meta)
@@ -4841,7 +5110,7 @@ def run_prepare_logic(input_files: list[Path], *, source_hints: dict | None = No
         "total_lines": total_lines,
         "total_chunks": len(plan),
         "unique_speakers": sum(item.markers for item in meta),
-        "duration_estimate": next((item.duration_estimate for item in reversed(meta) if item.duration_estimate), "unknown"),
+        "duration_estimate": effective_duration_estimate_for_meta(meta, source_hints),
         "speaker_stage": speaker_stage,
         "speaker_stage_reason": speaker_reason,
         "content_mode": content_mode,
@@ -5680,8 +5949,33 @@ def _extract_checklist_actions(text: str) -> list[str]:
     return actions
 
 
+def _count_populated_sections(text: str, heading_pattern: str) -> int:
+    heading_re = re.compile(heading_pattern)
+    next_heading_re = re.compile(r"^###\s+")
+    lines = text.splitlines()
+    count = 0
+    for index, line in enumerate(lines):
+        if not heading_re.match(line.strip()):
+            continue
+        has_content = False
+        for follow in lines[index + 1:]:
+            stripped = follow.strip()
+            if next_heading_re.match(stripped):
+                break
+            if stripped:
+                has_content = True
+                break
+        if has_content:
+            count += 1
+    return count
+
+
 def compute_final_quality_checks(work_dir: Path, output_md: Path) -> dict:
     note_contract = load_json_if_exists(note_contract_path(work_dir)) or {}
+    try:
+        prepare_payload = load_prepare_payload(work_dir)
+    except FileNotFoundError:
+        prepare_payload = {}
     quality = load_json_if_exists(quality_checks_path(work_dir)) or {
         "schema_version": 1,
         "content_mode": note_contract.get("content_mode") or "conversation",
@@ -5739,6 +6033,32 @@ def compute_final_quality_checks(work_dir: Path, output_md: Path) -> dict:
     actions = _extract_checklist_actions(text)
     verbish_actions = sum(1 for item in actions if ACTION_VERB_RE.match(item))
     actionability_ratio = round(verbish_actions / len(actions), 2) if actions else 1.0
+    duration_seconds = int(((prepare_payload.get("telemetry") or {}).get("duration_seconds") or 0))
+    block_contract = note_contract.get("blocks") if isinstance(note_contract.get("blocks"), dict) else {}
+    detail_targets = detail_density_targets_for(duration_seconds, str(note_contract.get("content_mode") or "conversation"))
+    block_files = sorted(work_dir.glob("chunk_*_block_*.md"))
+    block_count = len(block_files)
+    minutes = duration_seconds / 60 if duration_seconds > 0 else 0
+    block_density = round((block_count / minutes) * 10, 2) if minutes > 0 else None
+    word_count = len(re.findall(r"[\wА-Яа-яЁё'-]+", text, flags=re.UNICODE))
+    words_per_minute = round(word_count / minutes, 2) if minutes > 0 else None
+    meaning_blocks = _count_populated_sections(text, r"^###\s+Смысл блока:\s*$")
+    case_blocks = _count_populated_sections(text, r"^###\s+Кейс:\s*(.+?)\s*$")
+    deep_longform_targets = deep_longform_targets_for(block_count, block_contract)
+    deep_longform_ok = (
+        not deep_longform_targets["enabled"]
+        or (
+            meaning_blocks >= deep_longform_targets["min_meaning_blocks"]
+            and case_blocks >= deep_longform_targets["min_case_blocks"]
+        )
+    )
+    detail_density_ok = (
+        duration_seconds <= 0
+        or (
+            (block_density is None or block_density >= detail_targets["min_blocks_per_10min"])
+            and (words_per_minute is None or words_per_minute >= detail_targets["min_words_per_min"])
+        )
+    )
 
     quality["final"] = {
         "header_complete": header_complete,
@@ -5758,6 +6078,25 @@ def compute_final_quality_checks(work_dir: Path, output_md: Path) -> dict:
             "verbish_items": verbish_actions,
             "ratio": actionability_ratio,
             "ok": actionability_ratio >= 0.6,
+        },
+        "deep_longform_coverage": {
+            "enabled": deep_longform_targets["enabled"],
+            "detail_profile": str(block_contract.get("detail_profile") or "standard"),
+            "meaning_blocks": meaning_blocks,
+            "min_meaning_blocks": deep_longform_targets["min_meaning_blocks"],
+            "case_blocks": case_blocks,
+            "min_case_blocks": deep_longform_targets["min_case_blocks"],
+            "ok": deep_longform_ok,
+        },
+        "detail_density": {
+            "duration_seconds": duration_seconds,
+            "block_count": block_count,
+            "blocks_per_10min": block_density,
+            "min_blocks_per_10min": detail_targets["min_blocks_per_10min"],
+            "word_count": word_count,
+            "words_per_min": words_per_minute,
+            "min_words_per_min": detail_targets["min_words_per_min"],
+            "ok": detail_density_ok,
         },
     }
     write_quality_checks(work_dir, quality)
@@ -5789,6 +6128,12 @@ def contract_errors_for_quality(prepare_payload: dict, quality_payload: dict) ->
     actionability_payload = final_quality.get("actionability_score") if isinstance(final_quality.get("actionability_score"), dict) else {}
     if actionability_payload and not actionability_payload.get("ok", True):
         errors.append("action plan failed actionability threshold")
+    deep_longform_payload = final_quality.get("deep_longform_coverage") if isinstance(final_quality.get("deep_longform_coverage"), dict) else {}
+    if deep_longform_payload and deep_longform_payload.get("enabled") and not deep_longform_payload.get("ok", True):
+        errors.append("deep longform coverage is too thin: add more cases and intermediate conclusions")
+    detail_payload = final_quality.get("detail_density") if isinstance(final_quality.get("detail_density"), dict) else {}
+    if detail_payload and not detail_payload.get("ok", True):
+        errors.append("note is too compressed for source duration")
     return errors
 
 
