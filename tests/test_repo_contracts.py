@@ -1,3 +1,6 @@
+import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -226,6 +229,20 @@ class RepoContractTests(unittest.TestCase):
         for marker in required:
             self.assertIn(marker, text)
 
+    def test_skill_contract_requires_telegram_for_normal_notes_completion(self) -> None:
+        text = (REPO_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        required = [
+            "Telegram delivery is part of the normal `/notes` completion contract.",
+            "If the user did not explicitly ask to skip Telegram, do not treat `telegram_delivery.success == false` as a minor warning.",
+            "Use `--skip-telegram` only for explicit debug/smoke work, never as the final completion path for a user-facing `/notes` request.",
+        ]
+        for marker in required:
+            self.assertIn(marker, text)
+        self.assertNotIn(
+            "If `telegram_delivery.success == false`, treat it as a warning only.",
+            text,
+        )
+
     def test_skill_contract_retries_fixable_assemble_contract_failures(self) -> None:
         text = (REPO_ROOT / "SKILL.md").read_text(encoding="utf-8")
         required = [
@@ -235,6 +252,45 @@ class RepoContractTests(unittest.TestCase):
         ]
         for marker in required:
             self.assertIn(marker, text)
+
+    def test_skill_is_user_invocable_and_has_openai_interface_metadata(self) -> None:
+        skill_text = (REPO_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("user-invocable: true", skill_text)
+
+        interface_path = REPO_ROOT / "agents" / "openai.yaml"
+        self.assertTrue(interface_path.is_file())
+
+        interface_text = interface_path.read_text(encoding="utf-8")
+        required = [
+            'display_name: "Notes"',
+            'short_description: "Create detailed notes from YouTube, local media, or transcripts"',
+            'default_prompt: "Create detailed notes from this YouTube URL, local media file, or transcript."',
+        ]
+        for marker in required:
+            self.assertIn(marker, interface_text)
+
+    def test_dev_link_live_materializes_skill_metadata_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target_dir = Path(tmpdir) / "notes"
+            env = dict(os.environ, NOTES_LIVE_DIR=str(target_dir))
+            subprocess.run(
+                ["bash", "scripts/dev-link-live.sh", "--skip-backup"],
+                cwd=REPO_ROOT,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            skill_md = target_dir / "SKILL.md"
+            agents_dir = target_dir / "agents"
+            openai_yaml = agents_dir / "openai.yaml"
+            self.assertTrue(skill_md.is_file())
+            self.assertFalse(skill_md.is_symlink())
+            self.assertTrue(agents_dir.is_dir())
+            self.assertFalse(agents_dir.is_symlink())
+            self.assertTrue(openai_yaml.exists())
+            self.assertFalse(openai_yaml.is_symlink())
 
     def test_quick_suite_no_longer_depends_on_download_bundles(self) -> None:
         text = (REPO_ROOT / "scripts" / "test-pipeline.sh").read_text(encoding="utf-8")

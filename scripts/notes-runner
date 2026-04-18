@@ -80,6 +80,9 @@ from notes_runner_lib.prepare_transcript_runtime import (
 from notes_runner_lib.prepare_logic_runtime import (
     FileMeta,
     PrepareLogicDependencies,
+    _prepare_render_extraction_prompt as prepare_render_extraction_prompt_impl,
+    _prepare_render_header_prompt as prepare_render_header_prompt_impl,
+    _prepare_render_speaker_prompt as prepare_render_speaker_prompt_impl,
     execution_mode_for_total_chunks as execution_mode_for_total_chunks_impl,
     prepare_fingerprint_for_files as prepare_fingerprint_for_files_impl,
     run_prepare_logic as run_prepare_logic_impl,
@@ -1289,6 +1292,18 @@ def _prepare_logic_deps() -> PrepareLogicDependencies:
         header_seed_filename=HEADER_SEED_FILENAME,
         stage_state_dirname=STAGE_STATE_DIRNAME,
     )
+
+
+def _prepare_render_speaker_prompt(work_dir: Path) -> str:
+    return prepare_render_speaker_prompt_impl(work_dir, deps=_prepare_logic_deps())
+
+
+def _prepare_render_header_prompt(work_dir: Path) -> str:
+    return prepare_render_header_prompt_impl(work_dir, deps=_prepare_logic_deps())
+
+
+def _prepare_render_extraction_prompt(work_dir: Path, chunk: dict, execution_mode: str) -> str:
+    return prepare_render_extraction_prompt_impl(work_dir, chunk, execution_mode, deps=_prepare_logic_deps())
 
 
 def prepare_fingerprint_for_files(input_files: list[Path]) -> tuple[list[FileMeta], str]:

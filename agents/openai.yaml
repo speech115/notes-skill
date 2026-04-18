@@ -1,0 +1,4 @@
+interface:
+  display_name: "Notes"
+  short_description: "Create detailed notes from YouTube, local media, or transcripts"
+  default_prompt: "Create detailed notes from this YouTube URL, local media file, or transcript."

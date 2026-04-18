@@ -29,6 +29,9 @@
 
 Безопасный локальный smoke без Telegram:
 
+- Только для дебага harness-а и локальной forensic-проверки.
+- Не используй это как финальный шаг для пользовательского `/notes`: штатный результат считается завершённым только после Telegram-доставки.
+
 ```bash
 NOTES_RUNNER_DISABLE_TELEGRAM=1 python3 scripts/notes-runner assemble "$WORK_DIR" "$OUTPUT_MD" "$OUTPUT_HTML" "$TITLE" --skip-telegram --json
 ```

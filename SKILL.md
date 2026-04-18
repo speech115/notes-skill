@@ -2,6 +2,7 @@
 name: notes
 description: Create detailed study notes from YouTube videos, local media, or local transcripts. Use when the user says 'сделай конспект', 'конспект', 'законспектируй', 'notes', 'заметки по видео', or provides a YouTube URL and asks for a summary/notes. Also triggers on /notes.
 argument-hint: <youtube-url-or-absolute-path>
+user-invocable: true
 metadata:
   short-description: Detailed notes from YouTube, local media, or transcripts
 ---
@@ -253,7 +254,11 @@ Only stop immediately for real blockers:
 - a chunk agent failed to produce required files
 - the contract error points to missing source evidence you cannot invent honestly
 
-If `telegram_delivery.success == false`, treat it as a warning only. The notes files are already the primary result. Do not attempt manual Telegram fallback from the agent.
+Telegram delivery is part of the normal `/notes` completion contract.
+- If the user did not explicitly ask to skip Telegram, do not treat `telegram_delivery.success == false` as a minor warning.
+- Retry `assemble` with Telegram enabled when the current run was a smoke/debug path such as `--skip-telegram`.
+- If Telegram delivery still fails on the real run, stop and report it as a blocking error together with the note paths and the delivery failure reason.
+- Use `--skip-telegram` only for explicit debug/smoke work, never as the final completion path for a user-facing `/notes` request.
 
 ## Output to the user
 

@@ -33,6 +33,25 @@ class NotesRunnerRegressionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.runner = load_runner_module()
 
+    def test_enrich_work_dir_with_source_hints_passes_bound_prepare_prompt_helpers(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_impl(work_dir: Path, source_hints: dict | None, **kwargs: object) -> None:
+            captured["work_dir"] = work_dir
+            captured["source_hints"] = source_hints
+            captured.update(kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            work_dir = Path(tmp_dir)
+            with mock.patch.object(self.runner, "enrich_work_dir_with_source_hints_impl", side_effect=fake_impl):
+                self.runner.enrich_work_dir_with_source_hints(work_dir, {"kind": "youtube"})
+
+        self.assertEqual(captured["work_dir"], work_dir)
+        self.assertEqual(captured["source_hints"], {"kind": "youtube"})
+        self.assertTrue(callable(captured["render_speaker_prompt"]))
+        self.assertTrue(callable(captured["render_header_prompt"]))
+        self.assertTrue(callable(captured["render_extraction_prompt"]))
+
     def test_local_bundle_records_timeline_and_snapshot_with_codex_thread(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             source_path = Path(tmp_dir) / "source.md"
@@ -279,8 +298,6 @@ class NotesRunnerRegressionTests(unittest.TestCase):
             def fake_run(*args: object, **kwargs: object) -> types.SimpleNamespace:
                 return types.SimpleNamespace(returncode=9, stdout="", stderr="pandoc boom")
 
-            self.runner.subprocess.run = fake_run
-
             args = argparse.Namespace(
                 work_dir=str(work_dir),
                 output_md=str(output_md),
@@ -294,8 +311,9 @@ class NotesRunnerRegressionTests(unittest.TestCase):
 
             stdout = StringIO()
             stderr = StringIO()
-            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                exit_code = self.runner.cmd_assemble(args)
+            with mock.patch.object(self.runner.subprocess, "run", side_effect=fake_run):
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    exit_code = self.runner.cmd_assemble(args)
 
             self.assertEqual(exit_code, 9)
             self.assertIn("pandoc boom", stderr.getvalue())

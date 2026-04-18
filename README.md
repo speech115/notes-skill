@@ -133,6 +133,8 @@ notes-runner status "$WORK_DIR" --json
 
 Safe local smoke-check without Telegram side effects:
 
+Use this only for local debug/smoke work. It is not the normal completion path for a user-facing `/notes` run; the standard result includes Telegram delivery.
+
 ```bash
 NOTES_RUNNER_DISABLE_TELEGRAM=1 notes-runner assemble "$WORK_DIR" "$OUTPUT_MD" "$OUTPUT_HTML" "$TITLE" --skip-telegram --json
 ```
