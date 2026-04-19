@@ -759,7 +759,7 @@ def _prepare_render_extraction_prompt(
         "- `has_dialogue`: 1 if a dialogue section is present, else 0.\n"
         "- `quote_text`: the memorable quote text without markdown, or empty string.\n"
         "- `action_now`: reader-facing imperative action to try immediately, or empty string.\n"
-        "- `action_check`: reader-facing diagnostic/check question for the next week, or empty string.\n"
+        "- `action_check`: reader-facing weekly check phrased as an imperative prompt (for example: `Ответь себе на вопрос: ...`), or empty string.\n"
         "- `action_avoid`: one trap/pitfall to avoid on an ongoing basis, or empty string.\n"
         "- `cases`: 1 if a real case/example section was included, else 0.\n\n"
         "After writing all files, write the sentinel JSON with fields:\n"

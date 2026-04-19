@@ -39,6 +39,20 @@ build_deterministic_appendix() {
   "$RUNNER_BIN" ensure-appendix "$WORK_DIR" >/dev/null
 }
 
+build_deterministic_header() {
+  if [[ -f "$WORK_DIR/header.md" ]]; then
+    return 0
+  fi
+
+  if [[ ! -x "$RUNNER_BIN" ]]; then
+    echo "WARNING: notes-runner not found — skipping deterministic header generation"
+    return 0
+  fi
+
+  echo "No header.md found — generating deterministic header via notes-runner"
+  "$RUNNER_BIN" build-header "$WORK_DIR" >/dev/null
+}
+
 # ─── Step 1: Validate inputs ───
 
 BLOCK_FILES=("$WORK_DIR"/chunk_*_block_*.md)
@@ -70,6 +84,7 @@ else
 fi
 
 build_deterministic_appendix
+build_deterministic_header
 
 # ─── Step 3: Assemble Markdown with block renumbering ───
 

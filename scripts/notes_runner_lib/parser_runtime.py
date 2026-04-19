@@ -35,6 +35,13 @@ def build_parser(
     tldr_parser.add_argument("work_dir", help="Work directory path.")
     tldr_parser.add_argument("--json", action="store_true", default=False, help="Emit JSON result.")
 
+    header_parser = subparsers.add_parser(
+        "build-header",
+        help="Build header.md deterministically for micro-multi work dirs.",
+    )
+    header_parser.add_argument("work_dir", help="Work directory path.")
+    header_parser.add_argument("--json", action="store_true", default=False, help="Emit JSON result.")
+
     appendix_parser = subparsers.add_parser(
         "ensure-appendix",
         help="Build appendix.md deterministically from manifests and summaries when needed.",

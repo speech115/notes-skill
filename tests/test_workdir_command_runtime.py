@@ -14,9 +14,11 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from notes_runner_lib.workdir_command_runtime import (
     AppendixCommandDependencies,
+    HeaderCommandDependencies,
     ReplaceSpeakersCommandDependencies,
     StatusCommandDependencies,
     TldrCommandDependencies,
+    run_build_header_command,
     run_build_tldr_command,
     run_ensure_appendix_command,
     run_replace_speakers_command,
@@ -68,6 +70,35 @@ class WorkdirCommandRuntimeTests(unittest.TestCase):
         self.assertIn("TL;DR:", stdout_buffer.getvalue())
         self.assertEqual(metric_calls[0][1], "tldr")
         self.assertEqual(metric_calls[0][3], "deterministic-merge")
+
+    def test_run_build_header_command_records_metric(self) -> None:
+        stdout_buffer = io.StringIO()
+        metric_calls: list[tuple[Path, str, int, str]] = []
+
+        exit_code = run_build_header_command(
+            argparse.Namespace(work_dir="/tmp/work", json=True),
+            deps=HeaderCommandDependencies(
+                ensure_dir=lambda path, label: path,
+                build_deterministic_header=lambda work_dir: {
+                    "header_path": str(work_dir / "header.md"),
+                    "strategy": "deterministic-build",
+                    "generated": True,
+                    "skipped": False,
+                },
+                bundle_dir_from_work_dir=lambda work_dir: work_dir / "bundle",
+                record_bundle_stage_metric=lambda bundle, stage, duration_ms, strategy=None: metric_calls.append(
+                    (bundle, stage, duration_ms, strategy)
+                ),
+                ms_since=lambda started_at: 19,
+                stdout=stdout_buffer,
+            ),
+        )
+
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout_buffer.getvalue())
+        self.assertEqual(payload["duration_ms"], 19)
+        self.assertEqual(metric_calls[0][1], "header")
+        self.assertEqual(metric_calls[0][3], "deterministic-build")
 
     def test_run_replace_speakers_command_writes_sentinel_and_duration(self) -> None:
         stdout_buffer = io.StringIO()

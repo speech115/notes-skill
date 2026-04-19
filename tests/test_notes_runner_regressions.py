@@ -33,6 +33,96 @@ class NotesRunnerRegressionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.runner = load_runner_module()
 
+    def test_run_mlx_whisper_wrapper_matches_runtime_signature(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_impl(audio_path: Path, output_dir: Path, *, model: str, language: str | None) -> Path:
+            captured["audio_path"] = audio_path
+            captured["output_dir"] = output_dir
+            captured["model"] = model
+            captured["language"] = language
+            return output_dir / "sample.json"
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "sample.ogg"
+            audio_path.write_bytes(b"audio")
+            output_dir = Path(tmp_dir) / "out"
+            output_dir.mkdir()
+            with mock.patch.object(self.runner, "run_mlx_whisper_impl", side_effect=fake_impl):
+                result = self.runner.run_mlx_whisper(
+                    audio_path,
+                    output_dir,
+                    model="mlx-community/whisper-large-v3-turbo",
+                    language="ru",
+                )
+
+        self.assertEqual(result, output_dir / "sample.json")
+        self.assertEqual(captured["audio_path"], audio_path)
+        self.assertEqual(captured["output_dir"], output_dir)
+        self.assertEqual(captured["model"], "mlx-community/whisper-large-v3-turbo")
+        self.assertEqual(captured["language"], "ru")
+
+    def test_run_whisperx_diarize_wrapper_matches_runtime_signature(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_impl(audio_path: Path, output_dir: Path, *, model: str, language: str | None) -> Path:
+            captured["audio_path"] = audio_path
+            captured["output_dir"] = output_dir
+            captured["model"] = model
+            captured["language"] = language
+            return output_dir / "sample.json"
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "sample.ogg"
+            audio_path.write_bytes(b"audio")
+            output_dir = Path(tmp_dir) / "out"
+            output_dir.mkdir()
+            with mock.patch.object(self.runner, "run_whisperx_diarize_impl", side_effect=fake_impl):
+                result = self.runner.run_whisperx_diarize(
+                    audio_path,
+                    output_dir,
+                    model="large-v3",
+                    language="ru",
+                )
+
+        self.assertEqual(result, output_dir / "sample.json")
+        self.assertEqual(captured["audio_path"], audio_path)
+        self.assertEqual(captured["output_dir"], output_dir)
+        self.assertEqual(captured["model"], "large-v3")
+        self.assertEqual(captured["language"], "ru")
+
+    def test_whisper_json_wrapper_matches_runtime_signature(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_impl(whisper_json_path: Path) -> str:
+            captured["whisper_json_path"] = whisper_json_path
+            return "*00:00* тест\n"
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            whisper_json_path = Path(tmp_dir) / "sample.json"
+            whisper_json_path.write_text("{}", encoding="utf-8")
+            with mock.patch.object(self.runner, "whisper_json_to_transcript_markdown_impl", side_effect=fake_impl):
+                result = self.runner.whisper_json_to_transcript_markdown(whisper_json_path)
+
+        self.assertEqual(result, "*00:00* тест\n")
+        self.assertEqual(captured["whisper_json_path"], whisper_json_path)
+
+    def test_whisperx_json_wrapper_matches_runtime_signature(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_impl(whisperx_json_path: Path) -> str:
+            captured["whisperx_json_path"] = whisperx_json_path
+            return "**Speaker 1**: тест\n"
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            whisperx_json_path = Path(tmp_dir) / "sample.json"
+            whisperx_json_path.write_text("{}", encoding="utf-8")
+            with mock.patch.object(self.runner, "whisperx_json_to_transcript_markdown_impl", side_effect=fake_impl):
+                result = self.runner.whisperx_json_to_transcript_markdown(whisperx_json_path)
+
+        self.assertEqual(result, "**Speaker 1**: тест\n")
+        self.assertEqual(captured["whisperx_json_path"], whisperx_json_path)
+
     def test_enrich_work_dir_with_source_hints_passes_bound_prepare_prompt_helpers(self) -> None:
         captured: dict[str, object] = {}
 
@@ -250,6 +340,18 @@ class NotesRunnerRegressionTests(unittest.TestCase):
 
         self.assertIn("GROQ_API_KEY", str(exc.exception))
         self.assertNotIn("ELEVENLABS", str(exc.exception))
+
+    def test_execution_mode_routes_five_chunk_conversation_to_micro_multi(self) -> None:
+        self.assertEqual(
+            self.runner.execution_mode_for_plan(5, content_mode="conversation", duration_seconds=7080),
+            "micro-multi",
+        )
+
+    def test_parser_supports_build_header_command(self) -> None:
+        parser = self.runner.build_parser()
+        args = parser.parse_args(["build-header", "/tmp/work"])
+        self.assertEqual(args.command, "build-header")
+        self.assertEqual(args.work_dir, "/tmp/work")
 
     def test_batch_binary_markdown_writes_index_and_trace_instead_of_crashing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

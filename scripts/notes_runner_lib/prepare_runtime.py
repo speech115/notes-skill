@@ -47,9 +47,38 @@ def execution_mode_for_plan(total_chunks: int, *, content_mode: str, duration_se
             return "single"
         if total_chunks <= 4 and (duration_seconds == 0 or duration_seconds <= 35 * 60):
             return "micro-multi"
+    if content_mode == "conversation" and total_chunks <= 5:
+        return "micro-multi"
     if total_chunks <= 3:
         return "micro-multi"
     return "multi"
+
+
+def _speaker_placeholder_count(payload: dict) -> int:
+    totals = payload.get("totals") if isinstance(payload.get("totals"), dict) else {}
+    totals_count = totals.get("speaker_markers")
+    if totals_count is not None:
+        try:
+            return max(0, int(totals_count))
+        except (TypeError, ValueError):
+            return 0
+
+    file_entries = payload.get("files")
+    if isinstance(file_entries, list):
+        count = 0
+        for item in file_entries:
+            if not isinstance(item, dict):
+                continue
+            try:
+                count += max(0, int(item.get("markers") or 0))
+            except (TypeError, ValueError):
+                continue
+        return count
+
+    try:
+        return max(0, int(payload.get("unique_speakers") or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def parse_prepare_report(report_path: Path) -> dict:
@@ -476,13 +505,15 @@ def build_execution_plan(payload: dict, chunk_statuses: dict[str, dict], stages:
         chunk_plan = []
 
     total_chunks = int(payload.get("total_chunks") or len(chunk_plan) or 0)
-    mode = str(payload.get("execution_mode") or "").strip() or execution_mode_for_plan(
+    inferred_mode = execution_mode_for_plan(
         total_chunks,
         content_mode=str(payload.get("content_mode") or "conversation"),
     )
+    persisted_mode = str(payload.get("execution_mode") or "").strip()
+    mode = inferred_mode if persisted_mode == "multi" and inferred_mode == "micro-multi" else persisted_mode or inferred_mode
     content_mode = str(payload.get("content_mode") or "conversation")
     next_action = determine_next_action(stages)
-    prompt_packs = payload.get("prompt_packs") if isinstance(payload.get("prompt_packs"), dict) else {}
+    prompt_packs = dict(payload.get("prompt_packs")) if isinstance(payload.get("prompt_packs"), dict) else {}
     header_seed = payload.get("header_seed") if isinstance(payload.get("header_seed"), dict) else {}
     note_contract = payload.get("note_contract") if isinstance(payload.get("note_contract"), dict) else {}
     quality_checks = payload.get("quality_checks") if isinstance(payload.get("quality_checks"), dict) else {}
@@ -517,11 +548,13 @@ def build_execution_plan(payload: dict, chunk_statuses: dict[str, dict], stages:
     extraction_status = str(stages["extraction"].get("status") or "missing")
     tldr_status = str(stages["tldr"].get("status") or "missing")
     assemble_status = str(stages["assemble"].get("status") or "missing")
+    speaker_placeholders_present = _speaker_placeholder_count(payload) > 0
 
     should_run_speaker = (
         mode in {"micro-multi", "multi"}
         and speaker_hint != "skip"
         and speaker_status not in {"ready", "skipped"}
+        and (speaker_hint == "required" or speaker_placeholders_present)
     )
     should_run_extraction = extraction_status != "ready"
     tldr_strategy = (
@@ -529,7 +562,13 @@ def build_execution_plan(payload: dict, chunk_statuses: dict[str, dict], stages:
         else "deterministic-merge" if mode == "micro-multi"
         else "agent"
     )
+    prompt_packs["tldr_strategy"] = tldr_strategy
+    if mode != "multi":
+        prompt_packs["tldr_agent"] = None
     should_run_tldr = mode in {"micro-multi", "multi"} and extraction_status == "ready" and tldr_status != "ready"
+    tldr_bounds = dict(note_contract.get("tldr")) if isinstance(note_contract.get("tldr"), dict) else {}
+    if tldr_bounds:
+        tldr_bounds["strategy"] = tldr_strategy
 
     assemble_blocked_by: list[str] = []
     if mode in {"micro-multi", "multi"} and should_run_speaker:
@@ -571,8 +610,20 @@ def build_execution_plan(payload: dict, chunk_statuses: dict[str, dict], stages:
             "strategy": tldr_strategy,
         },
         "replace_speakers": {
-            "before_tldr": mode in {"micro-multi", "multi"} and extraction_status == "ready" and tldr_status != "ready" and speaker_hint != "skip",
-            "after_tldr": mode in {"micro-multi", "multi"} and extraction_status == "ready" and tldr_status != "ready" and speaker_hint != "skip",
+            "before_tldr": (
+                mode in {"micro-multi", "multi"}
+                and extraction_status == "ready"
+                and tldr_status != "ready"
+                and speaker_hint != "skip"
+                and speaker_placeholders_present
+            ),
+            "after_tldr": (
+                mode in {"micro-multi", "multi"}
+                and extraction_status == "ready"
+                and tldr_status != "ready"
+                and speaker_hint != "skip"
+                and speaker_placeholders_present
+            ),
         },
         "title_header": {
             "should_run": assemble_status != "ready",
@@ -585,7 +636,7 @@ def build_execution_plan(payload: dict, chunk_statuses: dict[str, dict], stages:
         "contract": {
             "note_contract_path": payload.get("note_contract_path"),
             "quality_checks_path": payload.get("quality_checks_path"),
-            "tldr_bounds": note_contract.get("tldr") if isinstance(note_contract.get("tldr"), dict) else {},
+            "tldr_bounds": tldr_bounds,
             "prepare_quality": quality_checks.get("prepare") if isinstance(quality_checks.get("prepare"), dict) else {},
         },
         "assemble": {

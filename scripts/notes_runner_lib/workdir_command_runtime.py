@@ -59,6 +59,40 @@ def run_build_tldr_command(args: argparse.Namespace, *, deps: TldrCommandDepende
 
 
 @dataclass(frozen=True)
+class HeaderCommandDependencies:
+    ensure_dir: Callable[[Path, str], Path]
+    build_deterministic_header: Callable[[Path], dict]
+    bundle_dir_from_work_dir: Callable[[Path], Path | None]
+    record_bundle_stage_metric: Callable[..., object]
+    ms_since: Callable[[float], int]
+    stdout: TextIO | None = None
+
+
+def run_build_header_command(args: argparse.Namespace, *, deps: HeaderCommandDependencies) -> int:
+    work_dir = deps.ensure_dir(Path(args.work_dir), "Work directory")
+    started_at = time.monotonic()
+    payload = deps.build_deterministic_header(work_dir)
+    payload["duration_ms"] = deps.ms_since(started_at)
+    bundle_dir = deps.bundle_dir_from_work_dir(work_dir)
+    if bundle_dir is not None and not payload.get("skipped"):
+        deps.record_bundle_stage_metric(
+            bundle_dir,
+            "header",
+            payload["duration_ms"],
+            strategy=payload.get("strategy"),
+        )
+    stdout = deps.stdout if deps.stdout is not None else sys.stdout
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2), file=stdout)
+        return 0
+    if payload.get("skipped"):
+        print(payload.get("reason", "skipped"), file=stdout)
+    else:
+        print(f"Header: {payload['header_path']}", file=stdout)
+    return 0
+
+
+@dataclass(frozen=True)
 class ReplaceSpeakersCommandDependencies:
     ensure_dir: Callable[[Path, str], Path]
     replace_speakers: Callable[[Path], dict]
@@ -141,9 +175,11 @@ def run_ensure_appendix_command(args: argparse.Namespace, *, deps: AppendixComma
 
 __all__ = [
     "AppendixCommandDependencies",
+    "HeaderCommandDependencies",
     "ReplaceSpeakersCommandDependencies",
     "StatusCommandDependencies",
     "TldrCommandDependencies",
+    "run_build_header_command",
     "run_build_tldr_command",
     "run_ensure_appendix_command",
     "run_replace_speakers_command",

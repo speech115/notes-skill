@@ -139,6 +139,9 @@ from notes_runner_lib.appendix_runtime import (
     build_deterministic_appendix as build_deterministic_appendix_impl,
     merge_manifest_parts as merge_manifest_parts_impl,
 )
+from notes_runner_lib.header_runtime import (
+    build_deterministic_header as build_deterministic_header_impl,
+)
 from notes_runner_lib.tldr_runtime import (
     SUMMARY_LINE_RE,
     build_tldr_deterministically as build_tldr_deterministically_impl,
@@ -147,9 +150,11 @@ from notes_runner_lib.tldr_runtime import (
 )
 from notes_runner_lib.workdir_command_runtime import (
     AppendixCommandDependencies,
+    HeaderCommandDependencies,
     ReplaceSpeakersCommandDependencies,
     StatusCommandDependencies,
     TldrCommandDependencies,
+    run_build_header_command,
     run_build_tldr_command,
     run_ensure_appendix_command,
     run_replace_speakers_command,
@@ -878,6 +883,8 @@ def execution_mode_for_plan(total_chunks: int, *, content_mode: str, duration_se
             return "single"
         if total_chunks <= 4 and (duration_seconds == 0 or duration_seconds <= 35 * 60):
             return "micro-multi"
+    if content_mode == "conversation" and total_chunks <= 5:
+        return "micro-multi"
     if total_chunks <= 3:
         return "micro-multi"
     return "multi"
@@ -1526,16 +1533,11 @@ def run_mlx_whisper(audio_path: Path, output_dir: Path, *, model: str, language:
         output_dir,
         model=model,
         language=language,
-        run_checked=run_checked,
     )
 
 
 def whisper_json_to_transcript_markdown(whisper_json_path: Path) -> str:
-    return whisper_json_to_transcript_markdown_impl(
-        whisper_json_path,
-        load_json=load_json,
-        format_mmss=format_mmss,
-    )
+    return whisper_json_to_transcript_markdown_impl(whisper_json_path)
 
 
 def run_whisperx_diarize(audio_path: Path, output_dir: Path, *, model: str, language: str | None) -> Path:
@@ -1544,16 +1546,11 @@ def run_whisperx_diarize(audio_path: Path, output_dir: Path, *, model: str, lang
         output_dir,
         model=model,
         language=language,
-        run_checked=run_checked,
     )
 
 
 def whisperx_json_to_transcript_markdown(whisperx_json_path: Path) -> str:
-    return whisperx_json_to_transcript_markdown_impl(
-        whisperx_json_path,
-        load_json=load_json,
-        format_mmss=format_mmss,
-    )
+    return whisperx_json_to_transcript_markdown_impl(whisperx_json_path)
 
 
 def _extract_audio_from_video(video_path: Path, output_dir: Path) -> Path:
@@ -1768,6 +1765,34 @@ def cmd_build_tldr(args: argparse.Namespace) -> int:
     )
 
 
+def build_deterministic_header(work_dir: Path) -> dict:
+    return build_deterministic_header_impl(
+        work_dir,
+        load_prepare_payload=load_prepare_payload,
+        load_json_if_exists=load_json_if_exists,
+        write_text=write_text,
+        write_stage_sentinel=write_stage_sentinel,
+        stage_sentinel_path=stage_sentinel_path,
+        update_prepare_state_fields=update_prepare_state_fields,
+        execution_mode_for_plan=execution_mode_for_plan,
+        read_summary_points_fn=read_summary_points,
+    )
+
+
+def cmd_build_header(args: argparse.Namespace) -> int:
+    return run_build_header_command(
+        args,
+        deps=HeaderCommandDependencies(
+            ensure_dir=ensure_dir,
+            build_deterministic_header=build_deterministic_header,
+            bundle_dir_from_work_dir=bundle_dir_from_work_dir,
+            record_bundle_stage_metric=record_bundle_stage_metric,
+            ms_since=ms_since,
+            stdout=sys.stdout,
+        ),
+    )
+
+
 def replace_speakers(work_dir: Path) -> dict:
     return replace_speakers_impl(work_dir)
 
@@ -1962,6 +1987,8 @@ def main() -> int:
             return cmd_replace_speakers(args)
         if args.command == "build-tldr":
             return cmd_build_tldr(args)
+        if args.command == "build-header":
+            return cmd_build_header(args)
         if args.command == "ensure-appendix":
             return cmd_ensure_appendix(args)
         if args.command == "assemble":
