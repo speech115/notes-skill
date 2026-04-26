@@ -45,9 +45,9 @@
 
 ```bash
 NOTES_RUNNER_DISABLE_TELEGRAM=1 python3 scripts/notes-runner assemble "$WORK_DIR" "$OUTPUT_MD" "$OUTPUT_HTML" "$TITLE" --skip-telegram --json
+```
 
 Это debug-only ветка. Для нормального пользовательского `/notes` финал считается закрытым только после успешной Telegram-доставки.
-```
 
 ## `promote-live` отказался работать
 

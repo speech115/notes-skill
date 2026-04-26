@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 
@@ -171,6 +172,54 @@ class PrepareLogicRuntimeTests(unittest.TestCase):
         deps = self._deps(trace_events=[])
         self.assertEqual(execution_mode_for_total_chunks(1, deps=deps), "single")
         self.assertEqual(execution_mode_for_total_chunks(4, deps=deps), "multi")
+
+    def test_run_prepare_logic_header_prompt_rewrites_weak_topic_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            transcript = Path(tmp_dir) / "transcript.md"
+            transcript.write_text(
+                "\n".join(
+                    [
+                        "*00:00* Так, запись я поставил. Да, запись я поставил.",
+                        "*00:08* Сегодня разберем, почему самооценка сыпется вместе с доходом.",
+                        "*00:16* Дальше поговорим про самодоверие, внутреннюю опору и действие.",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            deps = replace(
+                self._deps(trace_events=[]),
+                humanize_path_title_hint=lambda value: "",
+            )
+            result = run_prepare_logic([transcript], deps=deps)
+
+            header_prompt = (Path(result["work_dir"]) / "prompts" / "header.md").read_text(encoding="utf-8")
+            self.assertIn("Topic hint is weak transcript chatter.", header_prompt)
+            self.assertIn("Do not copy the first utterances", header_prompt)
+            self.assertIn("**Тема:** [one-line core topic in Russian]", header_prompt)
+            self.assertNotIn("**Тема:** Так, запись я поставил. Да, запись я поставил.", header_prompt)
+
+    def test_run_prepare_logic_extraction_prompt_recommends_check_prompt_for_action_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            transcript = Path(tmp_dir) / "transcript.md"
+            transcript.write_text(
+                "\n".join(
+                    [
+                        "*00:00* Клиент считывает сомнение раньше аргументов.",
+                        "*00:08* Поэтому проверку лучше формулировать как действие.",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = run_prepare_logic([transcript], deps=self._deps(trace_events=[]))
+
+            extraction_prompt = (Path(result["work_dir"]) / "prompts" / "extract-A.md").read_text(encoding="utf-8")
+            self.assertIn("for example: `Проверь: ...`", extraction_prompt)
+            self.assertIn('"started_at": "<ISO8601>"', extraction_prompt)
+            self.assertNotIn("Ответь себе на вопрос", extraction_prompt)
 
 
 if __name__ == "__main__":

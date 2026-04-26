@@ -11,6 +11,7 @@ from typing import Callable
 SUMMARY_LINE_RE = re.compile(r"^\s*(?:\d+[.)]|[-*])\s+(.+?)\s*$")
 SOURCE_NAME_RE = re.compile(r"меня зовут\s+([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё]+){0,2})", re.IGNORECASE)
 LATIN_AI_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9+-]*)\s+AI\b")
+CYRILLIC_AI_RE = re.compile(r"\bИИ\b", re.IGNORECASE)
 TOKEN_RE = re.compile(r"[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё0-9+-]*")
 TITLE_ENDINGS = (
     "иями",
@@ -124,6 +125,7 @@ STOPWORDS = {
     "через",
     "что",
     "это",
+    "автор",
 }
 GENERIC_STEMS = {
     "важн",
@@ -159,8 +161,18 @@ DISPLAY_OVERRIDES = {
     "конкурент": "конкуренты",
     "найм": "найм",
     "бренд": "личный бренд",
+    "ии": "ИИ",
+    "нейросет": "нейросети",
+    "функц": "функция",
+    "видени": "видение",
+    "аномал": "аномалия",
 }
 PREFERRED_KEYWORDS = (
+    "ии",
+    "функц",
+    "видени",
+    "нейросет",
+    "аномал",
     "manus ai",
     "manus",
     "деньг",
@@ -225,6 +237,8 @@ def _topic_phrase_for_sentence(value: str) -> str:
     text = _normalize_text(value)
     if not text:
         return "ключевые идеи разговора"
+    if CYRILLIC_AI_RE.search(text):
+        return text
     if re.search(r"[A-Z][A-Za-z0-9+-]*\s+AI\b", text):
         return text
     return text[:1].lower() + text[1:]
@@ -253,6 +267,31 @@ def _read_manifest_rows(work_dir: Path) -> list[dict[str, str]]:
     return rows
 
 
+def _informative_title_candidates(header_seed: dict, *, author_hint: str) -> list[str]:
+    raw_candidates = []
+    raw_title = _normalize_text(str(header_seed.get("raw_title") or ""))
+    if raw_title:
+        raw_candidates.append(raw_title)
+    if isinstance(header_seed.get("title_candidates"), list):
+        raw_candidates.extend(_normalize_text(str(item)) for item in header_seed.get("title_candidates", []))
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for candidate in raw_candidates:
+        if not candidate:
+            continue
+        key = candidate.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        if author_hint and key == author_hint.casefold():
+            continue
+        if len(TOKEN_RE.findall(candidate)) < 4:
+            continue
+        candidates.append(candidate)
+    return candidates
+
+
 def _extract_prescan_name(prescan_text: str) -> str:
     match = SOURCE_NAME_RE.search(prescan_text)
     return _normalize_text(match.group(1)) if match else ""
@@ -268,6 +307,7 @@ def _split_values(value: str) -> list[str]:
 
 def _extract_topic_scores(
     *,
+    title_candidates: list[str],
     topic_texts: list[str],
     tldr_points: list[str],
     summary_points: list[str],
@@ -283,13 +323,18 @@ def _extract_topic_scores(
         scores[norm_key] += weight
         displays.setdefault(norm_key, norm_display)
 
-    for weight, texts in ((3, topic_texts), (2, tldr_points), (1, summary_points)):
+    for weight, texts in ((4, title_candidates), (3, topic_texts), (2, tldr_points), (1, summary_points)):
         for text in texts:
             for match in LATIN_AI_RE.finditer(text):
                 phrase = _normalize_text(match.group(0))
                 add_candidate(phrase.lower(), phrase, weight + 2)
+            if CYRILLIC_AI_RE.search(text):
+                add_candidate("ии", "ИИ", weight + 2)
             for token in TOKEN_RE.findall(text):
                 lowered = token.lower().replace("ё", "е")
+                if lowered == "ии":
+                    add_candidate("ии", "ИИ", weight + 2)
+                    continue
                 if len(lowered) < 4 or lowered in STOPWORDS:
                     continue
                 stem = _title_stem(lowered)
@@ -302,12 +347,14 @@ def _extract_topic_scores(
 
 def _choose_topic_label(
     *,
+    title_candidates: list[str],
     topic_texts: list[str],
     tldr_points: list[str],
     summary_points: list[str],
     fallback_topic_hint: str,
 ) -> str:
     scores, displays = _extract_topic_scores(
+        title_candidates=title_candidates,
         topic_texts=topic_texts,
         tldr_points=tldr_points,
         summary_points=summary_points,
@@ -336,14 +383,22 @@ def _choose_topic_label(
             if len(chosen) >= 3:
                 break
 
+    informative_source_title = title_candidates[0] if title_candidates else ""
     if not chosen:
-        fallback = _normalize_text(fallback_topic_hint).strip(" ,.")
+        fallback = informative_source_title or _normalize_text(fallback_topic_hint).strip(" ,.")
         return _title_case_topic(fallback or "ключевые идеи разговора")
     if len(chosen) == 1:
-        return _title_case_topic(chosen[0])
-    if len(chosen) == 2:
-        return _title_case_topic(f"{chosen[0]} и {chosen[1]}")
-    return _title_case_topic(f"{chosen[0]}, {chosen[1]} и {chosen[2]}")
+        topic_label = _title_case_topic(chosen[0])
+    elif len(chosen) == 2:
+        topic_label = _title_case_topic(f"{chosen[0]} и {chosen[1]}")
+    else:
+        topic_label = _title_case_topic(f"{chosen[0]}, {chosen[1]} и {chosen[2]}")
+
+    source_has_ai = bool(informative_source_title and (CYRILLIC_AI_RE.search(informative_source_title) or LATIN_AI_RE.search(informative_source_title)))
+    topic_has_ai = bool(CYRILLIC_AI_RE.search(topic_label) or LATIN_AI_RE.search(topic_label))
+    if informative_source_title and (("автор" in topic_label.casefold()) or (source_has_ai and not topic_has_ai)):
+        return _title_case_topic(informative_source_title)
+    return topic_label
 
 
 def _effective_execution_mode(
@@ -360,9 +415,13 @@ def _effective_execution_mode(
         content_mode=content_mode,
         duration_seconds=duration_seconds,
     )
+    status_inferred = execution_mode_for_plan(
+        total_chunks,
+        content_mode=content_mode,
+    )
     persisted = str(prepare_payload.get("execution_mode") or "").strip()
-    if persisted == "multi" and inferred == "micro-multi":
-        return inferred
+    if persisted == "multi" and status_inferred == "micro-multi":
+        return status_inferred
     return persisted or inferred
 
 
@@ -405,8 +464,10 @@ def build_deterministic_header(
         summary_points.extend(_read_points(summary_path, read_summary_points_fn=read_summary_points_fn))
     tldr_points = _read_points(work_dir / "tldr.md", read_summary_points_fn=read_summary_points_fn) if (work_dir / "tldr.md").is_file() else []
 
+    title_candidates = _informative_title_candidates(header_seed, author_hint=_normalize_text(str(header_seed.get("author_hint") or "")))
     topic_texts = [row.get("topic", "") for row in manifest_rows if row.get("topic")]
     topic_label = _choose_topic_label(
+        title_candidates=title_candidates,
         topic_texts=topic_texts,
         tldr_points=tldr_points,
         summary_points=summary_points,
@@ -514,6 +575,7 @@ def build_deterministic_header(
         "work_dir": str(work_dir),
         "generated": True,
         "skipped": False,
+        "mode": mode,
         "strategy": "deterministic-build",
         "header_path": str(header_path),
         "title": title,

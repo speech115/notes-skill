@@ -37,8 +37,20 @@ def finalize_assemble_success(
     prepare_payload = success_context["prepare_payload"] if isinstance(success_context.get("prepare_payload"), dict) else {}
     quality_payload = success_context["quality_payload"] if isinstance(success_context.get("quality_payload"), dict) else {}
     contract_errors = list(success_context.get("contract_errors") or [])
+    skip_telegram_requested = bool(getattr(args, "skip_telegram", False))
+    telegram_ok = bool(isinstance(telegram_delivery, dict) and telegram_delivery.get("success"))
+    delivery_error = None
+    if not skip_telegram_requested and not telegram_ok:
+        delivery_error = str(
+            telegram_delivery.get("error")
+            or telegram_delivery.get("reason")
+            or "telegram delivery did not succeed"
+        )
+    blocking_errors = list(contract_errors)
+    if delivery_error:
+        blocking_errors.append(f"telegram delivery: {delivery_error}")
     sentinel_path = deps.stage_sentinel_path(work_dir, "assemble")
-    assemble_completed = not contract_errors
+    assemble_completed = not blocking_errors
     deps.write_stage_sentinel(
         sentinel_path,
         {
@@ -51,6 +63,8 @@ def finalize_assemble_success(
             "output_html": str(output_html),
             "quality_checks": str(success_context.get("quality_checks_path") or deps.quality_checks_path(work_dir)),
             "contract_errors": contract_errors,
+            "delivery_error": delivery_error,
+            "blocking_errors": blocking_errors,
         },
     )
     if isinstance(prepare_payload, dict) and prepare_payload.get("prepare_state_path"):
@@ -70,7 +84,13 @@ def finalize_assemble_success(
     deps.finish_bundle_run(
         bundle_dir,
         run_context,
-        status="assembled" if assemble_completed else "contract-failed",
+        status=(
+            "assembled"
+            if assemble_completed
+            else "delivery-failed"
+            if delivery_error and not contract_errors
+            else "contract-failed"
+        ),
         contract_errors=contract_errors,
         quality_payload=quality_payload,
         telegram_delivery=telegram_delivery,
@@ -83,6 +103,8 @@ def finalize_assemble_success(
         "telegram_delivery": telegram_delivery,
         "quality_checks": quality_payload,
         "contract_errors": contract_errors,
+        "delivery_error": delivery_error,
+        "blocking_errors": blocking_errors,
         "duration_ms": duration_ms,
         "sentinel": str(sentinel_path),
     }
@@ -95,6 +117,15 @@ def finalize_assemble_success(
         for error in contract_errors:
             print(f"ASSEMBLE CONTRACT ERROR: {error}", file=stderr)
         return 2
+    if delivery_error:
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2), file=stdout)
+            return 3
+        print(f"Markdown: {output_md}", file=stdout)
+        print(f"HTML: {output_html}", file=stdout)
+        print("Telegram delivery: failed", file=stdout)
+        print(f"ASSEMBLE DELIVERY ERROR: {delivery_error}", file=stderr)
+        return 3
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2), file=stdout)
         return 0

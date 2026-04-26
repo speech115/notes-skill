@@ -759,7 +759,7 @@ def _prepare_render_extraction_prompt(
         "- `has_dialogue`: 1 if a dialogue section is present, else 0.\n"
         "- `quote_text`: the memorable quote text without markdown, or empty string.\n"
         "- `action_now`: reader-facing imperative action to try immediately, or empty string.\n"
-        "- `action_check`: reader-facing weekly check phrased as an imperative prompt (for example: `Ответь себе на вопрос: ...`), or empty string.\n"
+        "- `action_check`: reader-facing weekly check phrased as an imperative prompt (for example: `Проверь: ...`), or empty string.\n"
         "- `action_avoid`: one trap/pitfall to avoid on an ongoing basis, or empty string.\n"
         "- `cases`: 1 if a real case/example section was included, else 0.\n\n"
         "After writing all files, write the sentinel JSON with fields:\n"
@@ -770,6 +770,7 @@ def _prepare_render_extraction_prompt(
         f'  "expected_outputs": {json.dumps(expected_outputs, ensure_ascii=False)},\n'
         f'  "summary_file": "summary_chunk_{chunk_id}.md",\n'
         '  "completed": true,\n'
+        '  "started_at": "<ISO8601>",\n'
         '  "completed_at": "<ISO8601>",\n'
         '  "block_files": ["chunk_' + chunk_id + '_block_01.md"]\n'
         "}\n"
@@ -798,11 +799,46 @@ def _prepare_render_tldr_prompt(work_dir: Path, *, deps: PrepareLogicDependencie
     )
 
 
+def _prepare_topic_hint_looks_like_transcript_chatter(topic_hint: str) -> bool:
+    text = " ".join((topic_hint or "").strip().split())
+    if not text:
+        return True
+
+    lowered = text.casefold()
+    sentence_breaks = len(re.findall(r"[.!?](?:\s|$)", text))
+    if sentence_breaks >= 2:
+        return True
+
+    if re.fullmatch(r"(.{6,80})[.!?]?\s+\1[.!?]?", lowered):
+        return True
+
+    weak_openers = (
+        "так,",
+        "так ",
+        "ну,",
+        "ну ",
+        "да,",
+        "да ",
+        "слушаю тебя",
+        "что хочешь",
+        "какой запрос",
+        "что покоя не дает",
+        "запись я поставил",
+        "в общем,",
+        "в общем ",
+    )
+    if any(lowered.startswith(prefix) for prefix in weak_openers):
+        return True
+
+    return False
+
+
 def _prepare_render_header_prompt(work_dir: Path, *, deps: PrepareLogicDependencies) -> str:
     header_seed = deps.load_json_if_exists(work_dir / deps.header_seed_filename) or {}
     note_contract = deps.load_json_if_exists(deps.note_contract_path(work_dir)) or {}
     source_identity = header_seed.get("source_identity") if isinstance(header_seed.get("source_identity"), dict) else {}
     topic_hint = deps.cleanup_title_text(str(header_seed.get("topic_hint") or ""))
+    weak_topic_hint = _prepare_topic_hint_looks_like_transcript_chatter(topic_hint)
     duration_hint = str(header_seed.get("duration_estimate") or "unknown").strip() or "unknown"
     author_hint = deps.cleanup_person_hint(str(header_seed.get("author_hint") or ""))
     format_label = str(
@@ -823,27 +859,43 @@ def _prepare_render_header_prompt(work_dir: Path, *, deps: PrepareLogicDependenc
         )
         or "локальный источник"
     )
-    metadata_lines: list[str] = []
+    metadata_prefix_lines: list[str] = []
     if deps.is_informative_person_hint(author_hint):
-        metadata_lines.append(f"**Автор:** {author_hint}")
-    metadata_lines.append(f"**Формат:** {format_label}")
-    metadata_lines.append(f"**Тема:** {topic_hint or 'Сформулируй по содержанию'}")
-    metadata_lines.append(f"**Длительность:** {duration_hint}")
-    metadata_lines.append(f"**Источник:** {source_label}")
-    metadata_block = "\n".join(metadata_lines)
+        metadata_prefix_lines.append(f"**Автор:** {author_hint}")
+    metadata_prefix_lines.append(f"**Формат:** {format_label}")
+    metadata_suffix_lines = [
+        f"**Длительность:** {duration_hint}",
+        f"**Источник:** {source_label}",
+    ]
+    metadata_constraints = "\n".join(metadata_prefix_lines + metadata_suffix_lines)
+    output_metadata_block = "\n".join(
+        metadata_prefix_lines
+        + ["**Тема:** [one-line core topic in Russian]"]
+        + metadata_suffix_lines
+    )
+    topic_guidance = (
+        "Topic hint is weak transcript chatter. Rewrite `**Тема:**` into one concise content-based topic in Russian. "
+        "Do not copy the first utterances, setup phrases, or recording boilerplate.\n"
+        if weak_topic_hint
+        else "Use the topic hint below only as a helper, and still phrase `**Тема:**` as a concise content-based topic in Russian.\n"
+    )
+    topic_hint_block = f"Topic hint: {topic_hint}\n" if topic_hint else ""
     return (
         f"Read {work_dir / deps.header_seed_filename}, {deps.note_contract_path(work_dir)} and {work_dir / 'tldr.md'} if it exists.\n"
         f"Use {work_dir / 'prescan_context.txt'} only as a fallback for disambiguation.\n"
         f"Write {work_dir / 'header.md'} using the header seed, note contract and TL;DR.\n"
         "Prefer the best content title candidate, not the raw source title.\n"
         "If header-seed.json contains author_hint and this is a single-speaker YouTube monologue, use that real name in the title instead of generic labels.\n\n"
-        "Write deterministic metadata exactly as provided below, and generate only the abstract plus the three author-frame bullets.\n\n"
-        "Metadata block to preserve:\n"
-        f"{metadata_block}\n\n"
+        "Preserve deterministic metadata exactly as provided below, except `**Тема:**`.\n"
+        "`**Тема:**` must be written from the content, not copied mechanically from a noisy hint.\n"
+        f"{topic_guidance}"
+        f"{topic_hint_block}\n"
+        "Metadata lines to preserve:\n"
+        f"{metadata_constraints}\n\n"
         "Output format:\n"
         "# [Content-based title]\n\n"
         "> [2-3 sentence content summary in Russian]\n\n"
-        f"{metadata_block}\n\n"
+        f"{output_metadata_block}\n\n"
         "## Главная рамка автора\n"
         "- [core belief]\n"
         "- [what the author pushes against]\n"

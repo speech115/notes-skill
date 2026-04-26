@@ -16,8 +16,9 @@ Default target resolution matches `install.sh`: prefer `~/.codex/skills/notes`, 
    - `scripts/release-check.sh`
 5. Promote the checked-out repo to the live skill:
    - `scripts/promote-live.sh`
-6. Smoke-check a real `/notes` run on a known video or transcript.
-   - safest local path: `NOTES_RUNNER_DISABLE_TELEGRAM=1 ... --skip-telegram`
+6. Smoke-check the release on a known video or transcript.
+   - safest deterministic local smoke without Telegram side effects: `NOTES_RUNNER_DISABLE_TELEGRAM=1 ... --skip-telegram`
+   - real user-completion smoke requires successful Telegram delivery
 7. Commit the release-ready state.
 8. Tag the stable version:
    - `git tag v$(cat VERSION)`

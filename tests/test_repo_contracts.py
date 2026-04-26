@@ -299,6 +299,11 @@ class RepoContractTests(unittest.TestCase):
         self.assertNotIn("BUNDLE_MEDIUM=", text)
         self.assertNotIn("BUNDLE_LONG=", text)
 
+    def test_release_check_explicitly_rejects_skip_in_quick_output(self) -> None:
+        text = (REPO_ROOT / "scripts" / "release-check.sh").read_text(encoding="utf-8")
+        self.assertIn("quick suite emitted SKIP", text)
+        self.assertIn("grep -Eq '\\bSKIP\\b'", text)
+
 
 if __name__ == "__main__":
     unittest.main()

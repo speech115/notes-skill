@@ -11,6 +11,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from notes_runner_lib.header_runtime import build_deterministic_header
+from notes_runner_lib.prepare_runtime import execution_mode_for_plan
 
 
 def _load_prepare_payload(work_dir: Path) -> dict:
@@ -181,6 +182,185 @@ class HeaderRuntimeTests(unittest.TestCase):
             self.assertTrue(payload["skipped"])
             self.assertEqual(payload["reason"], "deterministic header is enabled only for micro-multi")
             self.assertFalse((work_dir / "header.md").exists())
+
+    def test_build_deterministic_header_uses_effective_micro_multi_for_persisted_multi_monologue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            work_dir = Path(tmp_dir)
+            (work_dir / "prepare_state.json").write_text(
+                json.dumps(
+                    {
+                        "execution_mode": "multi",
+                        "content_mode": "monologue",
+                        "total_chunks": 4,
+                        "telemetry": {"duration_seconds": 6422},
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (work_dir / "header-seed.json").write_text(
+                json.dumps(
+                    {
+                        "topic_hint": "Как собрать ясную систему заметок",
+                        "duration_estimate": "01:47:02",
+                        "source_files": ["transcript.md"],
+                        "source_identity": {"source_kind": "audio", "duration_seconds": 6422},
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (work_dir / "note-contract.json").write_text(
+                json.dumps(
+                    {
+                        "content_mode": "monologue",
+                        "header": {"format_label": "лекция"},
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (work_dir / "tldr.md").write_text(
+                "\n".join(
+                    [
+                        "1. Заметки работают, когда система помогает быстро возвращаться к смыслу.",
+                        "2. Короткие блоки уменьшают шум и делают повторное чтение проще.",
+                        "3. Хороший заголовок сразу показывает главную тему материала.",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (work_dir / "summary_chunk_A.md").write_text(
+                "1. Система заметок держится на теме, блоках и ясном повторном чтении.\n",
+                encoding="utf-8",
+            )
+            (work_dir / "manifest_chunk_A.tsv").write_text(
+                "\n".join(
+                    [
+                        "block_file\ttimestamp_start\ttimestamp_end\ttopic\tprimary_claim\tnames\tresources\tcase_title\thas_dialogue\tquote_text\taction_now\taction_check\taction_avoid\tquotes_count\tcases",
+                        "chunk_A_block_01.md\t00:00\t10:00\tСистема заметок помогает быстро возвращаться к смыслу\tГлавная мысль\t\t\t\t0\t\t\t\t\t0\t0",
+                        "chunk_A_block_02.md\t10:00\t20:00\tКороткие блоки уменьшают шум в повторном чтении\tВторая мысль\t\t\t\t0\t\t\t\t\t0\t0",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            payload = build_deterministic_header(
+                work_dir,
+                load_prepare_payload=_load_prepare_payload,
+                load_json_if_exists=_load_json_if_exists,
+                write_text=_write_text,
+                write_stage_sentinel=_write_stage_sentinel,
+                stage_sentinel_path=lambda work_dir, stage_name: work_dir / "stages" / f"{stage_name}.json",
+                update_prepare_state_fields=_update_prepare_state_fields,
+                execution_mode_for_plan=execution_mode_for_plan,
+                read_summary_points_fn=_read_summary_points,
+            )
+
+            self.assertTrue(payload["generated"])
+            self.assertFalse(payload["skipped"])
+            self.assertEqual(payload["mode"], "micro-multi")
+            self.assertTrue((work_dir / "header.md").is_file())
+
+    def test_build_deterministic_header_uses_source_title_when_keyword_picker_goes_generic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            work_dir = Path(tmp_dir)
+            (work_dir / "prepare_state.json").write_text(
+                json.dumps(
+                    {
+                        "execution_mode": "micro-multi",
+                        "content_mode": "monologue",
+                        "total_chunks": 2,
+                        "telemetry": {"duration_seconds": 1385},
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (work_dir / "header-seed.json").write_text(
+                json.dumps(
+                    {
+                        "raw_title": "Кого заменит ИИ к 2030 году: Главная ошибка в понимании нейросетей",
+                        "title_candidates": [
+                            "Кого заменит ИИ к 2030 году: Главная ошибка в понимании нейросетей",
+                            "KARLO BRANS",
+                            "Почему именно ТЕБЯ заменит нейросеть?",
+                        ],
+                        "topic_hint": "KARLO BRANS",
+                        "duration_estimate": "23:05",
+                        "author_hint": "KARLO BRANS",
+                        "speaker_candidates": ["KARLO BRANS"],
+                        "source_identity": {"youtube": {"video_id": "b58H_6OXCfk"}},
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (work_dir / "note-contract.json").write_text(
+                json.dumps(
+                    {
+                        "content_mode": "monologue",
+                        "header": {"format_label": "лекция"},
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (work_dir / "tldr.md").write_text(
+                "\n".join(
+                    [
+                        "1. Автор делит рынок на архитекторов и людей-функций.",
+                        "2. Чем больше ИИ-контента, тем сильнее ценится живой голос.",
+                        "3. ИИ ускоряет функцию, но не заменяет видение.",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (work_dir / "summary_chunk_A.md").write_text(
+                "1. ИИ заменяет исполнителя, но не человека с аномалией.\n",
+                encoding="utf-8",
+            )
+            (work_dir / "manifest_chunk_A.tsv").write_text(
+                "\n".join(
+                    [
+                        "block_file\ttimestamp_start\ttimestamp_end\ttopic\tprimary_claim\tnames\tresources\tcase_title\thas_dialogue\tquote_text\taction_now\taction_check\taction_avoid\tquotes_count\tcases",
+                        "chunk_A_block_01.md\t00:00\t10:00\tИИ заменяет исполнителя, но не человека с аномалией\tГлавная мысль\tKARLO BRANS\t\t\t0\t\t\t\t\t0\t0",
+                        "chunk_A_block_02.md\t10:00\t20:00\tИИ ускоряет смысловика, но не заменяет чуйку и решение\tВторая мысль\tKARLO BRANS, Стив Джобс, Генри Форд\tGPT Chat\t\t0\t\t\t\t\t0\t0",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            payload = build_deterministic_header(
+                work_dir,
+                load_prepare_payload=_load_prepare_payload,
+                load_json_if_exists=_load_json_if_exists,
+                write_text=_write_text,
+                write_stage_sentinel=_write_stage_sentinel,
+                stage_sentinel_path=lambda work_dir, stage_name: work_dir / "stages" / f"{stage_name}.json",
+                update_prepare_state_fields=_update_prepare_state_fields,
+                execution_mode_for_plan=lambda total_chunks, *, content_mode, duration_seconds=0: "micro-multi",
+                read_summary_points_fn=_read_summary_points,
+            )
+
+            self.assertTrue(payload["generated"])
+            self.assertIn("ИИ", payload["topic"])
+            self.assertNotIn("автор", payload["topic"].casefold())
+            text = (work_dir / "header.md").read_text(encoding="utf-8")
+            self.assertIn("# KARLO BRANS —", text)
+            self.assertIn("**Тема:**", text)
+            self.assertIn("ИИ", text)
+            self.assertNotIn("Личный бренд, репутация и автор", text)
 
 
 if __name__ == "__main__":

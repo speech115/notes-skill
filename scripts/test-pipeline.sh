@@ -780,7 +780,7 @@ test_assemble_single() {
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Test Single Chunk" --json > "$tmpout/result.json" 2>/dev/null; then
+  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Test Single Chunk" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null; then
     fail "T09" "assemble exited non-zero"; return
   fi
 
@@ -816,7 +816,7 @@ test_assemble_multi() {
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Test Multi Chunk" --json > "$tmpout/result.json" 2>/dev/null; then
+  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Test Multi Chunk" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null; then
     fail "T10" "assemble exited non-zero"; return
   fi
 
@@ -870,7 +870,7 @@ BLOCK
   local out_html="$tmpout/output.html"
   local stderr_log="$tmpout/stderr.log"
 
-  $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "No Frontmatter Test" --json > "$tmpout/result.json" 2>"$stderr_log"
+  $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "No Frontmatter Test" --skip-telegram --json > "$tmpout/result.json" 2>"$stderr_log"
   local exit_code=$?
 
   local errors=""
@@ -917,7 +917,7 @@ BLOCK
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "No Manifest Test" --json > "$tmpout/result.json" 2>/dev/null
+  $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "No Manifest Test" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null
   local exit_code=$?
 
   local errors=""
@@ -974,7 +974,7 @@ SUMMARY
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "No Actions Test" --json > "$tmpout/result.json" 2>/dev/null; then
+  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "No Actions Test" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null; then
     fail "T12b" "assemble exited non-zero"; return
   fi
 
@@ -1030,7 +1030,7 @@ SUMMARY
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Appendix Schema Test" --json > "$tmpout/result.json" 2>/dev/null; then
+  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Appendix Schema Test" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null; then
     fail "T12ba" "assemble exited non-zero"; return
   fi
 
@@ -1089,7 +1089,7 @@ SUMMARY
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Numbered Actions Test" --json > "$tmpout/result.json" 2>/dev/null; then
+  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Numbered Actions Test" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null; then
     fail "T12bb" "assemble exited non-zero"; return
   fi
 
@@ -1202,7 +1202,7 @@ EOF
   local out_html="$tmpout/output.html"
   local json_out="$tmpout/result.json"
 
-  $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Strict Contract Test" --json > "$json_out" 2>/dev/null
+  $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Strict Contract Test" --skip-telegram --json > "$json_out" 2>/dev/null
   local exit_code=$?
 
   local errors=""
@@ -1243,7 +1243,7 @@ SUMMARY
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Manifest V2 Test" --json > "$tmpout/result.json" 2>/dev/null; then
+  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Manifest V2 Test" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null; then
     fail "T12cb" "assemble exited non-zero"; return
   fi
 
@@ -1368,7 +1368,7 @@ test_e2e_youtube_short() {
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "E2E Short Test" --json > "$tmpout/result.json" 2>/dev/null; then
+  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "E2E Short Test" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null; then
     fail "T15" "assemble failed"; return
   fi
 
@@ -1397,7 +1397,7 @@ test_e2e_local_multichunk() {
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "E2E Multi Chunk" --json > "$tmpout/result.json" 2>/dev/null; then
+  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "E2E Multi Chunk" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null; then
     fail "T16" "assemble failed"; return
   fi
 
