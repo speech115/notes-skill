@@ -6,8 +6,16 @@
 - Live install — deployment target.
 - Не правь `~/.codex/skills/notes` или `~/.agents/skills/notes` руками, если это не аварийная forensic-диагностика.
 
+Сначала читать:
+
+- `CONTEXT.md`
+- `REFERENCES.md`
+- `README.md`
+- `SKILL.md`
+
 Главные команды:
 
+- `bin/status`
 - `bash scripts/release-check.sh`
 - `python3 scripts/notes-runner doctor --json`
 - `python3 scripts/notes-runner status "$WORK_DIR" --json`
@@ -37,3 +45,19 @@ NOTES_RUNNER_DISABLE_TELEGRAM=1 python3 scripts/notes-runner assemble "$WORK_DIR
 ```
 
 Если `release-check` в quick-режиме показывает `SKIP`, это уже не “нормально”, а баг harness-а: deterministic слой должен проходить без пропусков.
+
+Рабочие зоны:
+
+- `scripts/notes_runner_lib/` — runtime-код runner-а.
+- `tests/` — regression и contract coverage.
+- `drafts/` — черновики решений и временные планы.
+- `outputs/` — существенные отчёты, audit notes и синтезы.
+- `final/` — готовые пользовательские/релизные артефакты, если они не являются кодом.
+- `references/` — внешние или локальные reference-материалы, не входящие в runtime.
+
+Done значит:
+
+- изменение сделано в repo, а не в live install;
+- `bin/status` проходит;
+- для runtime-изменений запущен `bash scripts/release-check.sh` или явно названо, почему он не запускался;
+- если изменение влияет на пользовательский `/notes`, финальный smoke не считается штатным без Telegram-доставки.
