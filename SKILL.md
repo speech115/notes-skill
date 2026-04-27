@@ -35,7 +35,7 @@ Do not assume a global `notes-runner` exists in `PATH`.
 
 **With audio transcription setup** (mlx-whisper or Groq API):
 - audio/video files (`.m4a`, `.mp3`, `.wav`, `.ogg`, `.opus`, `.mp4`, `.mov`, `.mkv`, `.webm`, `.avi`)
-- a directory of audio/text files (batch mode)
+- a directory of audio/text files for batch prepare/index mode
 
 **Advanced setup**:
 - Telegram voice/audio
@@ -96,17 +96,27 @@ If the argument is a directory containing multiple files:
 <skill-root>/scripts/notes-runner batch "$ARGUMENTS" --prepare --json
 ```
 
+Batch JSON is not a single-note payload. Do not apply the single-note continuation flow below to the whole batch result.
+
+For batch mode:
+- Report the batch `results`, `index`, `ok`, and `failed` values.
+- Do not claim final notes, final HTML, or Telegram delivery unless the runner result explicitly includes those final artifacts for each item.
+- If the user wants one batch item completed end-to-end, run `/notes` on that specific source file or resume that item's `$WORK_DIR` through the single-note flow.
+
 If the argument is not recognized, ask the user to provide one of:
 - a YouTube URL
 - an absolute path to `.md` / `.txt`
 - an absolute path to an audio/video file
-- a directory for batch processing
+- a directory for batch prepare/index processing
 
 ## Error handling
 
 If notes-runner exits with non-zero or produces no JSON output, report the error to the user and STOP. Do not proceed to extraction with missing/empty data.
 
 ## After the helper runs
+
+This section applies only to single-note commands (`youtube`, `local`, `audio`, `telegram`) that return one `bundle_dir` and one `prepare.work_dir`.
+For `batch`, stop at the batch summary unless the runner exposes per-item final artifacts or the user chooses a specific item to finish.
 
 Read the JSON output and extract these variables:
 
@@ -130,6 +140,8 @@ Read the JSON output and extract these variables:
 **IMPORTANT: Do NOT read the transcript into main context.** The extraction agents read it themselves. Reading it here wastes ~2K+ tokens. Only read `prescan_context.txt` in main context.
 
 ## One-shot contract
+
+This one-shot contract applies to one source item at a time. It does not turn the current batch summary payload into a single note.
 
 - Do not stop after `--prepare` succeeds.
 - Continue autonomously through extraction, header, and assemble until the final note files exist or a real error stops the run.

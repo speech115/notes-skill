@@ -221,6 +221,7 @@ class RepoContractTests(unittest.TestCase):
     def test_skill_contract_promises_end_to_end_delivery(self) -> None:
         text = (REPO_ROOT / "SKILL.md").read_text(encoding="utf-8")
         required = [
+            "This one-shot contract applies to one source item at a time. It does not turn the current batch summary payload into a single note.",
             "Do not stop after `--prepare` succeeds.",
             "Continue autonomously through extraction, header, and assemble until the final note files exist or a real error stops the run.",
             "Do not ask the user to manually run extraction, `replace-speakers`, `build-tldr`, or `assemble`.",
@@ -228,6 +229,19 @@ class RepoContractTests(unittest.TestCase):
         ]
         for marker in required:
             self.assertIn(marker, text)
+
+    def test_batch_contract_is_not_single_note_one_shot(self) -> None:
+        skill_text = (REPO_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        required = [
+            "Batch JSON is not a single-note payload.",
+            "Do not apply the single-note continuation flow below to the whole batch result.",
+            "Report the batch `results`, `index`, `ok`, and `failed` values.",
+            "For `batch`, stop at the batch summary unless the runner exposes per-item final artifacts or the user chooses a specific item to finish.",
+        ]
+        for marker in required:
+            self.assertIn(marker, skill_text)
+        readme_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertNotIn("Produces individual notes for each file + a `batch-index.html` with links.", readme_text)
 
     def test_skill_contract_requires_telegram_for_normal_notes_completion(self) -> None:
         text = (REPO_ROOT / "SKILL.md").read_text(encoding="utf-8")

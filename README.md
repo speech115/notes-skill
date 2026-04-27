@@ -84,7 +84,7 @@ See [RELEASE.md](RELEASE.md).
 | YouTube URL (with subs) | starter deps only |
 | Local `.md` / `.txt` | starter deps only |
 | Audio/video files (`.mp3`, `.m4a`, `.wav`, `.ogg`, `.opus`, `.mp4`, `.mov`, `.mkv`, `.webm`, `.avi`) | + audio transcription setup |
-| Batch (directory of files) | same as individual files |
+| Batch (directory of files) | prepares per-file bundles and indexes; final per-item completion is separate |
 | Telegram voice messages | + MCP setup |
 
 ## Audio transcription
@@ -111,7 +111,8 @@ Process an entire course/folder at once:
 notes-runner batch /path/to/course/audio/ --language en --prepare --json
 ```
 
-Produces individual notes for each file + a `batch-index.html` with links.
+Current batch mode prepares one bundle per supported file and writes `batch-index.json` / `batch-index.html`.
+Treat it as batch prepare/index mode: final per-item extraction, assemble, and Telegram delivery are not a completed user-facing `/notes` result unless those final artifacts already exist for each item.
 
 ## CLI flags
 

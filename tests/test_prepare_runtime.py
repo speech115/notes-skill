@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -8,15 +9,93 @@ SCRIPTS_DIR = REPO_ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from notes_runner_lib.prepare_runtime import build_execution_plan, execution_mode_for_plan
+from notes_runner_lib.prepare_runtime import build_execution_plan, infer_chunk_status
+from notes_runner_lib.prepare_runtime import execution_mode_for_plan
 
 
 class PrepareRuntimeTests(unittest.TestCase):
+    def _write_ready_chunk_files(self, work_dir: Path, chunk_id: str = "A") -> None:
+        (work_dir / f"chunk_{chunk_id}_block_01.md").write_text("## Block\n", encoding="utf-8")
+        (work_dir / f"manifest_chunk_{chunk_id}.tsv").write_text(
+            "block_file\ttimestamp_start\ttimestamp_end\ttopic\tprimary_claim\tnames\tresources\tcase_title\thas_dialogue\tquote_text\taction_now\taction_check\taction_avoid\tquotes_count\tcases\n",
+            encoding="utf-8",
+        )
+        (work_dir / f"summary_chunk_{chunk_id}.md").write_text("1. Summary\n", encoding="utf-8")
+
+    def _planned_chunk(self, work_dir: Path, *, fingerprint: str = "chunk-fp") -> dict:
+        return {
+            "id": "A",
+            "chunk_fingerprint": fingerprint,
+            "stage_sentinel_path": str(work_dir / "stages" / "extraction-A.json"),
+            "expected_outputs": [
+                "manifest_chunk_A.tsv",
+                "summary_chunk_A.md",
+                "stages/extraction-A.json",
+            ],
+        }
+
     def test_execution_mode_routes_five_chunk_conversation_to_micro_multi(self) -> None:
         self.assertEqual(
             execution_mode_for_plan(5, content_mode="conversation", duration_seconds=7080),
             "micro-multi",
         )
+
+    def test_execution_mode_single_means_exactly_one_chunk(self) -> None:
+        self.assertEqual(
+            execution_mode_for_plan(1, content_mode="monologue", duration_seconds=600),
+            "single",
+        )
+        self.assertEqual(
+            execution_mode_for_plan(2, content_mode="monologue", duration_seconds=600),
+            "micro-multi",
+        )
+
+    def test_infer_chunk_status_requires_completed_sentinel(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            work_dir = Path(tmp_dir)
+            stage_dir = work_dir / "stages"
+            stage_dir.mkdir()
+            self._write_ready_chunk_files(work_dir)
+            (stage_dir / "extraction-A.json").write_text(
+                '{"stage":"extraction","chunk_id":"A","chunk_fingerprint":"chunk-fp","completed":false}\n',
+                encoding="utf-8",
+            )
+
+            self.assertEqual(infer_chunk_status(work_dir, "A", self._planned_chunk(work_dir)), "partial")
+
+    def test_infer_chunk_status_requires_summary_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            work_dir = Path(tmp_dir)
+            stage_dir = work_dir / "stages"
+            stage_dir.mkdir()
+            self._write_ready_chunk_files(work_dir)
+            (work_dir / "summary_chunk_A.md").unlink()
+            (stage_dir / "extraction-A.json").write_text(
+                '{"stage":"extraction","chunk_id":"A","chunk_fingerprint":"chunk-fp","completed":true,"expected_outputs":["manifest_chunk_A.tsv","summary_chunk_A.md","stages/extraction-A.json"]}\n',
+                encoding="utf-8",
+            )
+
+            self.assertEqual(infer_chunk_status(work_dir, "A", self._planned_chunk(work_dir)), "partial")
+
+    def test_infer_chunk_status_requires_matching_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            work_dir = Path(tmp_dir)
+            stage_dir = work_dir / "stages"
+            stage_dir.mkdir()
+            self._write_ready_chunk_files(work_dir)
+            (stage_dir / "extraction-A.json").write_text(
+                '{"stage":"extraction","chunk_id":"A","chunk_fingerprint":"old-fp","completed":true,"expected_outputs":["manifest_chunk_A.tsv","summary_chunk_A.md","stages/extraction-A.json"]}\n',
+                encoding="utf-8",
+            )
+
+            self.assertEqual(infer_chunk_status(work_dir, "A", self._planned_chunk(work_dir)), "stale")
+
+    def test_infer_chunk_status_without_sentinel_is_partial_not_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            work_dir = Path(tmp_dir)
+            self._write_ready_chunk_files(work_dir)
+
+            self.assertEqual(infer_chunk_status(work_dir, "A", self._planned_chunk(work_dir)), "partial")
 
     def test_build_execution_plan_skips_optional_speaker_when_no_placeholders_exist(self) -> None:
         chunk_ids = ["A", "B", "C", "D", "E"]

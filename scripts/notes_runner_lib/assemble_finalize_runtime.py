@@ -39,6 +39,7 @@ def finalize_assemble_success(
     contract_errors = list(success_context.get("contract_errors") or [])
     skip_telegram_requested = bool(getattr(args, "skip_telegram", False))
     telegram_ok = bool(isinstance(telegram_delivery, dict) and telegram_delivery.get("success"))
+    delivery_skipped = skip_telegram_requested and not telegram_ok
     delivery_error = None
     if not skip_telegram_requested and not telegram_ok:
         delivery_error = str(
@@ -50,13 +51,21 @@ def finalize_assemble_success(
     if delivery_error:
         blocking_errors.append(f"telegram delivery: {delivery_error}")
     sentinel_path = deps.stage_sentinel_path(work_dir, "assemble")
-    assemble_completed = not blocking_errors
+    assemble_completed = not blocking_errors and not delivery_skipped
+    assemble_stage_status = (
+        "ready"
+        if assemble_completed
+        else "delivery-skipped"
+        if delivery_skipped and not blocking_errors
+        else "failed"
+    )
     deps.write_stage_sentinel(
         sentinel_path,
         {
             "stage": "assemble",
             "fingerprint": prepare_payload.get("fingerprint") if isinstance(prepare_payload, dict) else None,
             "completed": assemble_completed,
+            "delivery_skipped": delivery_skipped,
             "completed_at": deps.iso_now(),
             "duration_ms": duration_ms,
             "output_md": str(output_md),
@@ -70,7 +79,7 @@ def finalize_assemble_success(
     if isinstance(prepare_payload, dict) and prepare_payload.get("prepare_state_path"):
         deps.update_prepare_state_fields(
             work_dir,
-            {"stage_statuses": {"assemble": "ready" if assemble_completed else "failed"}},
+            {"stage_statuses": {"assemble": assemble_stage_status}},
         )
     deps.record_bundle_stage_metric(
         bundle_dir,
@@ -80,6 +89,7 @@ def finalize_assemble_success(
         output_html=str(output_html),
         telegram_success=telegram_delivery.get("success"),
         contract_ok=assemble_completed,
+        delivery_skipped=delivery_skipped,
     )
     deps.finish_bundle_run(
         bundle_dir,
@@ -87,6 +97,8 @@ def finalize_assemble_success(
         status=(
             "assembled"
             if assemble_completed
+            else "delivery-skipped"
+            if delivery_skipped and not contract_errors
             else "delivery-failed"
             if delivery_error and not contract_errors
             else "contract-failed"
@@ -104,6 +116,7 @@ def finalize_assemble_success(
         "quality_checks": quality_payload,
         "contract_errors": contract_errors,
         "delivery_error": delivery_error,
+        "delivery_skipped": delivery_skipped,
         "blocking_errors": blocking_errors,
         "duration_ms": duration_ms,
         "sentinel": str(sentinel_path),

@@ -100,6 +100,43 @@ copy_fixture() {
   echo "$dst"
 }
 
+ensure_fixture_extraction_sentinels() {
+  local work_dir="$1"
+  run_py - "$work_dir" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+work_dir = Path(sys.argv[1])
+stage_dir = work_dir / "stages"
+stage_dir.mkdir(parents=True, exist_ok=True)
+chunk_ids = set()
+for path in work_dir.glob("chunk_*_block_*.md"):
+    match = re.match(r"chunk_([A-Za-z0-9]+)_block_\d+\.md$", path.name)
+    if match:
+        chunk_ids.add(match.group(1))
+for chunk_id in sorted(chunk_ids):
+    sentinel_path = stage_dir / f"extraction-{chunk_id}.json"
+    if sentinel_path.is_file():
+        continue
+    block_files = sorted(path.name for path in work_dir.glob(f"chunk_{chunk_id}_block_*.md"))
+    payload = {
+        "stage": "extraction",
+        "chunk_id": chunk_id,
+        "expected_outputs": [
+            f"manifest_chunk_{chunk_id}.tsv",
+            f"summary_chunk_{chunk_id}.md",
+            f"stages/extraction-{chunk_id}.json",
+        ],
+        "completed": True,
+        "completed_at": "fixture",
+        "block_files": block_files,
+    }
+    sentinel_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
 GENERATED_PREPARE_ROOT=""
 
 ensure_generated_prepare_root() {
@@ -575,6 +612,7 @@ test_status_complete() {
 
   local work_dir
   work_dir=$(copy_fixture "$FIXTURES/single-chunk")
+  ensure_fixture_extraction_sentinels "$work_dir"
   local status_json="$work_dir/status_out.json"
 
   if ! $RUN_CMD status "$work_dir" --json > "$status_json" 2>/dev/null; then
@@ -634,6 +672,7 @@ test_status_prefers_observed_ready_chunks() {
 
   local work_dir
   work_dir=$(copy_fixture "$FIXTURES/multi-chunk")
+  ensure_fixture_extraction_sentinels "$work_dir"
   python3 - <<PY >/dev/null
 import json
 from pathlib import Path

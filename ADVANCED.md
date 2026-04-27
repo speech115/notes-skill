@@ -36,8 +36,9 @@ notes-runner batch /path/to/course/ --language en --prepare --json
 
 This will:
 - find all `.mp3`, `.m4a`, `.wav`, `.md`, `.txt` files in the directory
-- transcribe/prepare each one with progress reporting (`[1/8] file.mp3...`)
-- write `batch-index.json` and `batch-index.html` with links to all notes
+- transcribe/prepare one bundle per supported file with progress reporting (`[1/8] file.mp3...`)
+- write `batch-index.json` and `batch-index.html`
+- leave final extraction/assemble/Telegram completion as a per-item step unless the runner result explicitly includes final artifacts
 - reuse existing transcripts (skip already-processed files)
 
 The runner also checks for adjacent `.json` files (Whisper output) next to audio files and reuses them automatically.
