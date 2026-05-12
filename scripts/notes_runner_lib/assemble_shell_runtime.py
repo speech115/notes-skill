@@ -14,6 +14,7 @@ class AssembleShellContext:
     work_dir: Path
     output_md: Path
     output_html: Path
+    html_theme: str
     bundle_dir: Path
     started_at: float
     run_context: dict
@@ -49,6 +50,9 @@ def prepare_assemble_shell_context(
     deps.build_deterministic_appendix(work_dir)
     output_md = Path(args.output_md).expanduser().resolve()
     output_html = Path(args.output_html).expanduser().resolve()
+    html_theme = str(getattr(args, "html_theme", None) or "classic")
+    if html_theme not in {"classic", "longform"}:
+        raise ValueError(f"Unsupported HTML theme: {html_theme}")
     output_md.parent.mkdir(parents=True, exist_ok=True)
     output_html.parent.mkdir(parents=True, exist_ok=True)
     started_at = time.monotonic()
@@ -62,12 +66,14 @@ def prepare_assemble_shell_context(
                 "markdown": str(output_md),
                 "html": str(output_html),
             },
+            "html_theme": html_theme,
         },
     )
     return AssembleShellContext(
         work_dir=work_dir,
         output_md=output_md,
         output_html=output_html,
+        html_theme=html_theme,
         bundle_dir=bundle_dir,
         started_at=started_at,
         run_context=run_context,
@@ -81,7 +87,15 @@ def run_assemble_shell(
     deps: AssembleShellDependencies,
 ) -> subprocess.CompletedProcess[str] | int:
     result = deps.subprocess_run(
-        ["bash", str(deps.assemble_script), str(context.work_dir), str(context.output_md), str(context.output_html), args.title],
+        [
+            "bash",
+            str(deps.assemble_script),
+            str(context.work_dir),
+            str(context.output_md),
+            str(context.output_html),
+            args.title,
+            context.html_theme,
+        ],
         text=True,
         capture_output=True,
         check=False,

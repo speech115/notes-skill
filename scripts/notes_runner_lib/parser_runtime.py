@@ -54,6 +54,12 @@ def build_parser(
     assemble_parser.add_argument("output_md", help="Output markdown path.")
     assemble_parser.add_argument("output_html", help="Output HTML path.")
     assemble_parser.add_argument("title", help="Document title.")
+    assemble_parser.add_argument(
+        "--html-theme",
+        choices=("classic", "longform"),
+        default="classic",
+        help="HTML rendering theme. Use classic for current output or longform for annotated reader output.",
+    )
     assemble_parser.add_argument("--send-to", default=None, help="Override Telegram chat target (e.g. @username or chat_id)")
     assemble_parser.add_argument(
         "--skip-telegram",

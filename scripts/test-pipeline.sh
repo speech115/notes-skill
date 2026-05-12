@@ -877,6 +877,45 @@ test_assemble_multi() {
   if [[ -z "$errors" ]]; then pass "T10"; else fail "T10" "$errors"; fi
 }
 
+# ── T10b: assemble HTML themes ─────────────────────────────────────────────
+test_assemble_html_themes() {
+  echo -e "${BOLD}T10b: assemble classic and longform HTML themes${RESET}"
+  if [[ ! -d "$FIXTURES/multi-chunk" ]]; then skip "T10b" "fixture missing"; return; fi
+
+  local work_dir
+  work_dir=$(copy_fixture "$FIXTURES/multi-chunk")
+  local tmpout
+  tmpout=$(mk_tmpdir)
+  local classic_md="$tmpout/classic.md"
+  local classic_html="$tmpout/classic.html"
+  local longform_md="$tmpout/longform.md"
+  local longform_html="$tmpout/longform.html"
+
+  if ! $RUN_CMD assemble "$work_dir" "$classic_md" "$classic_html" "Classic Theme" --html-theme classic --skip-telegram --json > "$tmpout/classic.json" 2>/dev/null; then
+    fail "T10b" "classic assemble exited non-zero"; return
+  fi
+  if ! $RUN_CMD assemble "$work_dir" "$longform_md" "$longform_html" "Longform Theme" --html-theme longform --skip-telegram --json > "$tmpout/longform.json" 2>/dev/null; then
+    fail "T10b" "longform assemble exited non-zero"; return
+  fi
+
+  local errors=""
+  [[ -f "$classic_html" ]] || errors+="no classic HTML; "
+  [[ -f "$longform_html" ]] || errors+="no longform HTML; "
+
+  if [[ -f "$classic_html" ]]; then
+    grep -q '<html' "$classic_html" || errors+="classic invalid HTML; "
+    grep -q 'note-page' "$classic_html" && errors+="classic contains longform page class; "
+  fi
+  if [[ -f "$longform_html" ]]; then
+    grep -q '<html' "$longform_html" || errors+="longform invalid HTML; "
+    grep -q 'note-page' "$longform_html" || errors+="longform missing note-page; "
+    grep -q 'note-chapter' "$longform_html" || errors+="longform missing note-chapter; "
+    grep -q 'note-appendix' "$longform_html" || errors+="longform missing note-appendix; "
+  fi
+
+  if [[ -z "$errors" ]]; then pass "T10b"; else fail "T10b" "$errors"; fi
+}
+
 # ── T11: assemble with no-frontmatter blocks ──────────────────────────────
 test_assemble_no_frontmatter() {
   echo -e "${BOLD}T11: assemble with block files missing YAML frontmatter${RESET}"
@@ -1502,6 +1541,7 @@ test_replace_collision
 test_replace_no_speakers
 test_assemble_single
 test_assemble_multi
+test_assemble_html_themes
 test_assemble_no_frontmatter
 test_assemble_no_manifest
 test_appendix_no_invented_actions

@@ -17,6 +17,7 @@ from notes_runner_lib.assemble_shell_runtime import (
     prepare_assemble_shell_context,
     run_assemble_shell,
 )
+from notes_runner_lib.parser_runtime import build_parser
 
 
 class AssembleShellRuntimeTests(unittest.TestCase):
@@ -54,8 +55,62 @@ class AssembleShellRuntimeTests(unittest.TestCase):
 
             self.assertEqual(context.output_md.name, "note.md")
             self.assertEqual(context.output_html.name, "note.html")
+            self.assertEqual(context.html_theme, "classic")
             self.assertEqual(context.bundle_dir, context.output_html.parent)
             self.assertEqual(context.run_context["command"], "assemble")
+            self.assertEqual(context.run_context["state_seed"]["html_theme"], "classic")
+
+    def test_prepare_assemble_shell_context_accepts_explicit_longform_theme(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            script_path = tmp_path / "assemble.sh"
+            script_path.write_text("#!/bin/bash\n", encoding="utf-8")
+            args = argparse.Namespace(
+                work_dir=str(tmp_path / "work"),
+                output_md=str(tmp_path / "out" / "note.md"),
+                output_html=str(tmp_path / "out" / "note.html"),
+                title="Test note",
+                html_theme="longform",
+            )
+
+            context = prepare_assemble_shell_context(
+                args,
+                deps=AssembleShellDependencies(
+                    assemble_script=script_path,
+                    ensure_dir=lambda path, label: path,
+                    merge_manifest_parts=lambda work_dir: None,
+                    build_deterministic_appendix=lambda work_dir: work_dir / "appendix.md",
+                    start_bundle_run=lambda bundle_dir, command, state_seed: {"run_id": "run-1", "command": command, "state_seed": state_seed},
+                    subprocess_run=lambda **kwargs: None,  # unused
+                    handle_assemble_shell_failure=lambda **kwargs: None,
+                    update_prepare_state_fields=lambda work_dir, updates: None,
+                    write_stage_sentinel=lambda path, payload: None,
+                    append_trace_event=lambda *args, **kwargs: None,
+                    record_bundle_stage_metric=lambda *args, **kwargs: None,
+                    finish_bundle_run=lambda *args, **kwargs: None,
+                    ms_since=lambda started_at: 0,
+                    stderr_sink=io.StringIO(),
+                ),
+            )
+
+            self.assertEqual(context.html_theme, "longform")
+            self.assertEqual(context.run_context["state_seed"]["html_theme"], "longform")
+
+    def test_parser_rejects_invalid_html_theme(self) -> None:
+        parser = build_parser("outputs", "http://127.0.0.1:8765")
+
+        with self.assertRaises(SystemExit):
+            parser.parse_args(
+                [
+                    "assemble",
+                    "work",
+                    "out.md",
+                    "out.html",
+                    "Title",
+                    "--html-theme",
+                    "neon",
+                ]
+            )
 
     def test_run_assemble_shell_routes_failures_into_handler(self) -> None:
         failure_calls: list[dict] = []
@@ -69,14 +124,21 @@ class AssembleShellRuntimeTests(unittest.TestCase):
                 output_md=str(tmp_path / "out" / "note.md"),
                 output_html=str(tmp_path / "out" / "note.html"),
                 title="Test note",
+                html_theme="longform",
             )
+            recorded_commands: list[list[str]] = []
+
+            def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+                recorded_commands.append(command)
+                return subprocess.CompletedProcess(command, 9, stdout="", stderr="boom")
+
             deps = AssembleShellDependencies(
                 assemble_script=script_path,
                 ensure_dir=lambda path, label: path,
                 merge_manifest_parts=lambda work_dir: None,
                 build_deterministic_appendix=lambda work_dir: work_dir / "appendix.md",
                 start_bundle_run=lambda bundle_dir, command, state_seed: {"run_id": "run-1", "command": command, "state_seed": state_seed},
-                subprocess_run=lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 9, stdout="", stderr="boom"),
+                subprocess_run=fake_run,
                 handle_assemble_shell_failure=lambda **kwargs: failure_calls.append(kwargs),
                 update_prepare_state_fields=lambda work_dir, updates: None,
                 write_stage_sentinel=lambda path, payload: None,
@@ -91,6 +153,7 @@ class AssembleShellRuntimeTests(unittest.TestCase):
             exit_code = run_assemble_shell(args, context=context, deps=deps)
 
         self.assertEqual(exit_code, 9)
+        self.assertEqual(recorded_commands[0][-1], "longform")
         self.assertEqual(failure_calls[0]["work_dir"], context.work_dir)
         self.assertEqual(failure_calls[0]["result"].returncode, 9)
 
