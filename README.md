@@ -97,11 +97,11 @@ export GROQ_API_KEY=your-key-here
 ```
 Free key at [console.groq.com](https://console.groq.com). Fast, no local dependencies.
 
-**Option B — MLX Whisper (macOS Apple Silicon only):**
+**Option B — MacWhisper Parakeet (macOS):**
 ```bash
-pip install mlx-whisper
+mw models select parakeet-pro:nvidia_parakeet-v3
 ```
-Runs locally, no API key needed. If Groq hits rate limits, the runner falls back to MLX Whisper automatically (macOS only).
+Runs locally, no API key needed. If Groq hits rate limits, the runner falls back to MacWhisper Parakeet automatically (macOS only).
 
 ## Batch mode
 
@@ -121,6 +121,7 @@ Treat it as batch prepare/index mode: final per-item extraction, assemble, and T
 | `--title "Name"` | `audio`, `local` | Override bundle directory name |
 | `--language en` | `audio`, `batch`, `youtube` | Audio language hint (default: `ru`) |
 | `--transcribe-backend groq` | `audio`, `batch` | Force Groq API |
+| `--transcribe-backend parakeet` | `audio`, `batch` | Force MacWhisper Parakeet |
 | `--prepare` | all | Run chunking/prepare after transcription |
 | `--refresh` | all | Re-transcribe even if cached |
 

@@ -91,6 +91,138 @@ class NotesRunnerRegressionTests(unittest.TestCase):
         self.assertEqual(captured["model"], "large-v3")
         self.assertEqual(captured["language"], "ru")
 
+    def test_call_parakeet_transcribe_uses_macwhisper_cli(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_run_checked(command: list[str], *, label: str) -> object:
+            captured["command"] = command
+            captured["label"] = label
+            md_out = Path(command[command.index("--md-out") + 1])
+            json_out = Path(command[command.index("--json-out") + 1])
+            md_out.write_text("*00:00* тест\n", encoding="utf-8")
+            json_out.write_text("{}", encoding="utf-8")
+            return types.SimpleNamespace(stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "sample.mp3"
+            audio_path.write_bytes(b"audio")
+            json_out = Path(tmp_dir) / "out.json"
+            with mock.patch.object(self.runner.shutil, "which", return_value="/usr/local/bin/mw"):
+                with mock.patch.object(self.runner, "run_checked", side_effect=fake_run_checked):
+                    result = self.runner.call_parakeet_transcribe(
+                        audio_path,
+                        language="ru",
+                        json_output_path=json_out,
+                    )
+            self.assertTrue(json_out.is_file())
+
+        command = captured["command"]
+        self.assertEqual(result, "*00:00* тест\n")
+        self.assertEqual(captured["label"], "MacWhisper Parakeet transcription")
+        self.assertIn("parakeet-pro:nvidia_parakeet-v3", command)
+        self.assertIn("--quiet", command)
+
+    def test_call_parakeet_transcribe_normalizes_ogg_before_macwhisper(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_ffmpeg_run(command: list[str], **_: object) -> object:
+            captured["ffmpeg_command"] = command
+            output_path = Path(command[-1])
+            output_path.write_bytes(b"m4a")
+            return types.SimpleNamespace(stdout="", stderr="")
+
+        def fake_run_checked(command: list[str], *, label: str) -> object:
+            captured["mw_command"] = command
+            captured["label"] = label
+            transcribed_path = Path(command[2])
+            captured["transcribed_suffix"] = transcribed_path.suffix
+            captured["transcribed_exists"] = transcribed_path.exists()
+            md_out = Path(command[command.index("--md-out") + 1])
+            json_out = Path(command[command.index("--json-out") + 1])
+            md_out.write_text("*00:00* тест\n", encoding="utf-8")
+            json_out.write_text("{}", encoding="utf-8")
+            return types.SimpleNamespace(stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "sample.ogg"
+            audio_path.write_bytes(b"ogg")
+            json_out = Path(tmp_dir) / "out.json"
+            with mock.patch.object(self.runner.shutil, "which", return_value="/usr/local/bin/mw"):
+                with mock.patch.object(self.runner.subprocess, "run", side_effect=fake_ffmpeg_run):
+                    with mock.patch.object(self.runner, "run_checked", side_effect=fake_run_checked):
+                        result = self.runner.call_parakeet_transcribe(
+                            audio_path,
+                            language="ru",
+                            json_output_path=json_out,
+                        )
+
+        self.assertEqual(result, "*00:00* тест\n")
+        self.assertEqual(captured["label"], "MacWhisper Parakeet transcription")
+        self.assertEqual(captured["transcribed_suffix"], ".m4a")
+        self.assertTrue(captured["transcribed_exists"])
+        self.assertIn("-c:a", captured["ffmpeg_command"])
+        self.assertIn("aac", captured["ffmpeg_command"])
+        self.assertNotEqual(Path(captured["mw_command"][2]), audio_path)
+
+    def test_groq_preflight_skips_audio_at_hourly_audio_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "long.mp3"
+            audio_path.write_bytes(b"audio")
+            raw_output_path = Path(tmp_dir) / "groq.json"
+            with mock.patch.dict(self.runner.os.environ, {"GROQ_API_KEY": "test-key"}, clear=True):
+                with mock.patch.object(self.runner, "probe_media_duration_seconds", return_value=7200):
+                    with mock.patch.object(self.runner, "_groq_transcribe_single") as groq_call:
+                        with self.assertRaises(self.runner.RateLimitError) as exc:
+                            self.runner.call_groq_transcribe(audio_path, raw_output_path, language="ru")
+
+        groq_call.assert_not_called()
+        details = exc.exception.details
+        self.assertEqual(details["scope"], "hourly")
+        self.assertEqual(details["daily_limit_status"], "not_checked")
+        self.assertEqual(details["hourly_limit_status"], "exhausted")
+        self.assertEqual(details["preflight"]["duration_seconds"], 7200)
+        self.assertEqual(details["preflight"]["hourly_limit_seconds"], 7200)
+
+    def test_groq_rate_limit_error_records_daily_headers(self) -> None:
+        def fake_run(command: list[str], **_: object) -> object:
+            headers_path = Path(command[command.index("-D") + 1])
+            headers_path.write_text(
+                "\n".join(
+                    [
+                        "HTTP/2 429",
+                        "retry-after: 7320",
+                        "x-ratelimit-limit-audio-seconds: 28800",
+                        "x-ratelimit-remaining-audio-seconds: 0",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "error": {
+                            "code": "rate_limit_exceeded",
+                            "message": "ASD limit exceeded for audio per day. Please try again later.",
+                        }
+                    }
+                ),
+                stderr="",
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = Path(tmp_dir) / "sample.mp3"
+            audio_path.write_bytes(b"audio")
+            with mock.patch.object(self.runner.subprocess, "run", side_effect=fake_run):
+                with self.assertRaises(self.runner.RateLimitError) as exc:
+                    self.runner._groq_transcribe_single(audio_path, api_key="test-key", language="ru")
+
+        details = exc.exception.details
+        self.assertEqual(details["scope"], "daily")
+        self.assertEqual(details["daily_limit_status"], "exhausted")
+        self.assertEqual(details["retry_after_seconds"], 7320)
+        self.assertEqual(details["headers"]["x-ratelimit-remaining-audio-seconds"], "0")
+
     def test_whisper_json_wrapper_matches_runtime_signature(self) -> None:
         captured: dict[str, object] = {}
 
@@ -341,6 +473,12 @@ class NotesRunnerRegressionTests(unittest.TestCase):
         self.assertIn("GROQ_API_KEY", str(exc.exception))
         self.assertNotIn("ELEVENLABS", str(exc.exception))
 
+    def test_choose_transcribe_backend_uses_macwhisper_parakeet_on_macos(self) -> None:
+        with mock.patch.dict(self.runner.os.environ, {}, clear=True):
+            with mock.patch.object(self.runner, "is_macos", return_value=True):
+                with mock.patch.object(self.runner, "parakeet_available", return_value=True):
+                    self.assertEqual(self.runner.choose_transcribe_backend("auto"), "parakeet")
+
     def test_execution_mode_routes_five_chunk_conversation_to_micro_multi(self) -> None:
         self.assertEqual(
             self.runner.execution_mode_for_plan(5, content_mode="conversation", duration_seconds=7080),
@@ -352,6 +490,11 @@ class NotesRunnerRegressionTests(unittest.TestCase):
         args = parser.parse_args(["build-header", "/tmp/work"])
         self.assertEqual(args.command, "build-header")
         self.assertEqual(args.work_dir, "/tmp/work")
+
+    def test_parser_accepts_parakeet_backend(self) -> None:
+        parser = self.runner.build_parser()
+        args = parser.parse_args(["audio", "/tmp/a.mp3", "--transcribe-backend", "parakeet"])
+        self.assertEqual(args.transcribe_backend, "parakeet")
 
     def test_batch_binary_markdown_writes_index_and_trace_instead_of_crashing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

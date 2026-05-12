@@ -32,6 +32,7 @@ class TelegramCommandDependencies:
     call_groq_transcribe: Callable[..., object]
     groq_payload_to_transcript_markdown: Callable[[object], str]
     is_macos: Callable[[], bool]
+    call_parakeet_transcribe: Callable[..., str]
     run_mlx_whisper: Callable[..., Path]
     whisper_json_to_transcript_markdown: Callable[[Path], str]
     run_prepare_for_transcript: Callable[..., dict]
@@ -43,6 +44,7 @@ class TelegramCommandDependencies:
     finish_bundle_run: Callable[..., object]
     stderr: TextIO | None = None
     groq_model: str = "whisper-large-v3-turbo"
+    parakeet_model: str = "parakeet-pro:nvidia_parakeet-v3"
     transcription_feature_name: str = "Telegram voice notes"
 
 
@@ -142,25 +144,24 @@ def run_telegram_command(args: argparse.Namespace, *, deps: TelegramCommandDepen
                     "raw_json": str(raw_json_path),
                     "downloaded_path": str(media_path),
                 }
-            elif deps.is_macos():
+            elif api_backend == "parakeet" or deps.is_macos():
                 deps.ensure_audio_transcription_available(deps.transcription_feature_name)
                 if use_diarize:
-                    print("Warning: --diarize requested but whisperx is not installed. Falling back to mlx_whisper.", file=stderr)
-                with tempfile.TemporaryDirectory(prefix="notes-whisper-") as tmp_dir:
-                    tmp_output = Path(tmp_dir)
-                    whisper_output = deps.run_mlx_whisper(
-                        media_path, tmp_output, model=args.model, language=deps.local_backend_language(args.language),
-                    )
-                    shutil.copy2(whisper_output, whisper_json_path)
-                raw_markdown = deps.whisper_json_to_transcript_markdown(whisper_json_path)
+                    print("Warning: --diarize requested but whisperx is not installed. Falling back to MacWhisper Parakeet.", file=stderr)
+                language_hint = deps.normalize_language_hint(args.language) if hasattr(args, "language") else "ru"
+                raw_markdown = deps.call_parakeet_transcribe(
+                    media_path,
+                    language=language_hint,
+                    json_output_path=whisper_json_path,
+                )
                 deps.write_text(transcript_path, deps.normalize_transcript_text(raw_markdown))
                 transcript_source = {
-                    "kind": "telegram-voice",
+                    "kind": "telegram-voice-macwhisper-parakeet",
                     "chat": args.chat,
                     "message_id": args.message_id,
-                    "model": args.model,
-                    "language": args.language,
-                    "whisper_json": str(whisper_json_path),
+                    "model": deps.parakeet_model,
+                    "language": language_hint or "auto",
+                    "raw_json": str(whisper_json_path),
                     "downloaded_path": str(media_path),
                 }
             else:

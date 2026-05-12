@@ -14,9 +14,9 @@
 Проверь:
 
 - `python3 scripts/notes-runner doctor --json`
-- есть ли `mlx_whisper`, `parakeet_mlx` или `GROQ_API_KEY`
+- есть ли `macwhisper_parakeet` или `GROQ_API_KEY`
 
-Если используешь autodetect языка, runner больше не должен пихать `auto` в локальный MLX CLI. Если это снова всплывёт, смотри `trace.jsonl` и командный stderr.
+Если используешь autodetect языка, runner больше не должен пихать `auto` в локальный transcriber. Если это снова всплывёт, смотри `trace.jsonl` и командный stderr.
 
 ## `assemble` упал и непонятно почему
 

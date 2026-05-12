@@ -4,10 +4,10 @@ Starter mode supports YouTube (with subs) and local `.md`/`.txt`. Everything bel
 
 ## Audio transcription
 
-**Option A — Local MLX Whisper (Apple Silicon, no API key):**
+**Option A — Local MacWhisper Parakeet (macOS, no API key):**
 
 ```bash
-python3 -m pip install mlx-whisper
+mw models select parakeet-pro:nvidia_parakeet-v3
 ```
 
 **Option B — Groq Cloud API (any Mac, faster for large files):**
@@ -16,7 +16,7 @@ python3 -m pip install mlx-whisper
 export GROQ_API_KEY=your-key-here
 ```
 
-Get a free key at [console.groq.com](https://console.groq.com). If Groq hits rate limits (>2 min wait), the runner automatically falls back to local MLX Whisper.
+Get a free key at [console.groq.com](https://console.groq.com). If Groq hits rate limits (>2 min wait), the runner automatically falls back to local MacWhisper Parakeet.
 
 After setup, these commands work:
 
@@ -24,6 +24,7 @@ After setup, these commands work:
 notes-runner audio /path/to/file.mp3 --language en --prepare --json
 notes-runner audio /path/to/file.mp3 --title "Lecture 1" --prepare --json
 notes-runner audio /path/to/file.mp3 --transcribe-backend groq --prepare --json
+notes-runner audio /path/to/file.mp3 --transcribe-backend parakeet --prepare --json
 ```
 
 ## Batch processing

@@ -87,7 +87,7 @@ def build_parser(
     )
     youtube_parser.add_argument(
         "--transcribe-backend",
-        choices=("auto", "groq"),
+        choices=("auto", "groq", "parakeet"),
         default="auto",
         help="API backend for subtitle fallback transcription.",
     )
@@ -179,7 +179,7 @@ def build_parser(
     )
     audio_parser.add_argument(
         "--transcribe-backend",
-        choices=("auto", "groq"),
+        choices=("auto", "groq", "parakeet"),
         default="auto",
         help="API backend for transcription. When set, uses Groq instead of local whisper.",
     )
@@ -253,7 +253,7 @@ def build_parser(
     )
     auto_parser.add_argument(
         "--transcribe-backend",
-        choices=("auto", "groq"),
+        choices=("auto", "groq", "parakeet"),
         default="auto",
         help="API backend for YouTube subtitle fallback transcription.",
     )
@@ -299,7 +299,7 @@ def build_parser(
     )
     batch_parser.add_argument(
         "--transcribe-backend",
-        choices=("auto", "groq"),
+        choices=("auto", "groq", "parakeet"),
         default="auto",
         help="API backend for transcription.",
     )

@@ -33,7 +33,7 @@ Do not assume a global `notes-runner` exists in `PATH`.
 - a YouTube URL with usable subtitles/autosubs
 - a local absolute path to `.md` or `.txt`
 
-**With audio transcription setup** (mlx-whisper or Groq API):
+**With audio transcription setup** (MacWhisper Parakeet or Groq API):
 - audio/video files (`.m4a`, `.mp3`, `.wav`, `.ogg`, `.opus`, `.mp4`, `.mov`, `.mkv`, `.webm`, `.avi`)
 - a directory of audio/text files for batch prepare/index mode
 

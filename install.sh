@@ -183,7 +183,7 @@ if [[ "$PLATFORM" != "macos" ]]; then
   echo ""
 else
   echo "Audio transcription (macOS):"
-  echo "  Option A (local):  pip install mlx-whisper"
+  echo "  Option A (local):  mw models select parakeet-pro:nvidia_parakeet-v3"
   echo "  Option B (cloud):  export GROQ_API_KEY=your-key-here"
   echo "  Get a free key at https://console.groq.com"
   echo ""

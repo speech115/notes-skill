@@ -36,6 +36,7 @@ class AudioCommandDependencies:
     groq_payload_to_transcript_markdown: Callable[[dict], str]
     groq_rate_limit_error: type[BaseException]
     is_macos: Callable[[], bool]
+    parakeet_available: Callable[[], bool]
     mlx_whisper_available: Callable[[], bool]
     ensure_audio_transcription_available: Callable[[str], None]
     local_backend_language: Callable[[str], str | None]
@@ -54,7 +55,7 @@ class AudioCommandDependencies:
     ms_since: Callable[[float], int]
     stderr: TextIO | None = None
     groq_model: str = "whisper-large-v3-turbo"
-    parakeet_model: str = "parakeet-tdt-0.6b-v3"
+    parakeet_model: str = "parakeet-pro:nvidia_parakeet-v3"
     transcription_feature_name: str = "Audio transcription"
 
 
@@ -185,25 +186,50 @@ def _cmd_audio_inner(
                     "language": language_hint or "auto",
                     "raw_json": str(raw_json_path),
                 }
+                groq_rate_limit = raw_payload.get("_groq_rate_limit") if isinstance(raw_payload, dict) else None
+                if isinstance(groq_rate_limit, dict):
+                    transcript_source["groq_rate_limit"] = groq_rate_limit
             except (deps.groq_rate_limit_error, ValueError) as exc:
-                if deps.is_macos() and deps.mlx_whisper_available():
-                    print(f"Groq failed ({exc}), falling back to MLX Whisper...", file=stderr)
-                    api_backend = None
+                if deps.is_macos() and deps.parakeet_available():
+                    print(f"Groq failed ({exc}), falling back to MacWhisper Parakeet...", file=stderr)
+                    language_hint = deps.normalize_language_hint(args.language) if hasattr(args, "language") else "ru"
+                    raw_markdown = deps.call_parakeet_transcribe(
+                        audio_path,
+                        language=language_hint,
+                        json_output_path=whisper_json_path,
+                    )
+                    deps.write_text(transcript_path, deps.normalize_transcript_text(raw_markdown))
+                    transcript_source = {
+                        "kind": "macwhisper_parakeet",
+                        "model": deps.parakeet_model,
+                        "language": language_hint or "auto",
+                        "raw_json": str(whisper_json_path),
+                        "fallback_from": "groq",
+                        "fallback_reason": str(exc),
+                    }
+                    groq_rate_limit = getattr(exc, "details", None)
+                    if isinstance(groq_rate_limit, dict):
+                        transcript_source["groq_rate_limit"] = groq_rate_limit
                 else:
                     raise ValueError(
                         f"Groq transcription failed: {exc}. "
-                        f"No local fallback available on this platform. "
+                        f"No MacWhisper Parakeet fallback available on this platform. "
                         f"Check your GROQ_API_KEY and try again."
                     ) from exc
         elif api_backend == "parakeet":
             language_hint = deps.normalize_language_hint(args.language) if hasattr(args, "language") else "ru"
-            print("Transcribing with Parakeet v3 (MLX)...", file=stderr)
-            raw_markdown = deps.call_parakeet_transcribe(audio_path, language=language_hint)
+            print("Transcribing with MacWhisper Parakeet...", file=stderr)
+            raw_markdown = deps.call_parakeet_transcribe(
+                audio_path,
+                language=language_hint,
+                json_output_path=whisper_json_path,
+            )
             deps.write_text(transcript_path, deps.normalize_transcript_text(raw_markdown))
             transcript_source = {
-                "kind": "parakeet",
+                "kind": "macwhisper_parakeet",
                 "model": deps.parakeet_model,
                 "language": language_hint or "auto",
+                "raw_json": str(whisper_json_path),
             }
         elif api_backend in ("deepgram", "openai"):
             raw_json_path = bundle_dir / "api_output.json"
@@ -250,23 +276,19 @@ def _cmd_audio_inner(
                 )
             deps.ensure_audio_transcription_available(deps.transcription_feature_name)
             if use_diarize:
-                print("Warning: --diarize requested but whisperx is not installed. Falling back to mlx_whisper.", file=stderr)
-            with tempfile.TemporaryDirectory(prefix="notes-whisper-") as tmp_dir:
-                tmp_output = Path(tmp_dir)
-                whisper_output = deps.run_mlx_whisper(
-                    audio_path,
-                    tmp_output,
-                    model=args.model,
-                    language=deps.local_backend_language(args.language),
-                )
-                shutil.copy2(whisper_output, whisper_json_path)
-            raw_markdown = deps.whisper_json_to_transcript_markdown(whisper_json_path)
+                print("Warning: --diarize requested but whisperx is not installed. Falling back to MacWhisper Parakeet.", file=stderr)
+            language_hint = deps.normalize_language_hint(args.language) if hasattr(args, "language") else "ru"
+            raw_markdown = deps.call_parakeet_transcribe(
+                audio_path,
+                language=language_hint,
+                json_output_path=whisper_json_path,
+            )
             deps.write_text(transcript_path, deps.normalize_transcript_text(raw_markdown))
             transcript_source = {
-                "kind": "mlx_whisper",
-                "model": args.model,
-                "language": args.language,
-                "whisper_json": str(whisper_json_path),
+                "kind": "macwhisper_parakeet",
+                "model": deps.parakeet_model,
+                "language": language_hint or "auto",
+                "raw_json": str(whisper_json_path),
             }
 
         payload: dict[str, object] = {

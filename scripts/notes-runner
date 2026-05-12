@@ -323,19 +323,19 @@ def ensure_audio_transcription_available(feature_name: str) -> None:
     """Check that at least one transcription backend is available."""
     if os.environ.get("GROQ_API_KEY"):
         return
-    if is_macos() and (mlx_whisper_available() or parakeet_available()):
+    if is_macos() and parakeet_available():
         return
     if is_macos():
         raise FileNotFoundError(
             advanced_setup_message(
                 feature_name,
-                "Install parakeet-mlx (`pip install parakeet-mlx`) or mlx-whisper, or set GROQ_API_KEY (free at console.groq.com)",
+                "Install MacWhisper CLI (`mw`) with the parakeet-pro:nvidia_parakeet-v3 model, or set GROQ_API_KEY (free at console.groq.com)",
             )
         )
     raise FileNotFoundError(
         advanced_setup_message(
             feature_name,
-            "Set GROQ_API_KEY (free at console.groq.com). MLX Whisper is macOS-only.",
+            "Set GROQ_API_KEY (free at console.groq.com). MacWhisper Parakeet is macOS-only.",
         )
     )
 
@@ -1012,25 +1012,77 @@ def transcript_markdown_from_cues(cues: list[dict]) -> str:
 
 
 def parakeet_available() -> bool:
-    """Check if parakeet-mlx is importable."""
-    return python_module_available("parakeet_mlx")
+    """Check if MacWhisper CLI is available for Parakeet transcription."""
+    return shutil.which("mw") is not None
 
 
-def call_parakeet_transcribe(audio_path: Path, language: str | None = None) -> str:
-    """Transcribe using parakeet-mlx, return transcript markdown."""
-    from parakeet_mlx import from_pretrained  # type: ignore[import-untyped]
+MACWHISPER_DIRECT_AUDIO_SUFFIXES = {".m4a", ".mp3", ".wav", ".aif", ".aiff", ".flac"}
 
-    model = from_pretrained("mlx-community/parakeet-tdt-0.6b-v3")
-    # chunk_duration prevents OOM on long files (Metal buffer limit ~16GB)
-    result = model.transcribe(str(audio_path), chunk_duration=300, overlap_duration=10)
 
-    lines = []
-    for sentence in result.sentences:
-        ts = format_mmss(sentence.start)
-        text = sentence.text.strip()
-        if text:
-            lines.append(f"*{ts}* {text}")
-    return "\n".join(lines).rstrip() + "\n" if lines else ""
+def normalize_audio_for_macwhisper(audio_path: Path, output_dir: Path) -> Path:
+    """Return a MacWhisper-friendly audio file, converting risky containers to m4a."""
+    if audio_path.suffix.lower() in MACWHISPER_DIRECT_AUDIO_SUFFIXES:
+        return audio_path
+
+    output_path = output_dir / f"{audio_path.stem}.m4a"
+    command = [
+        "ffmpeg",
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        str(audio_path),
+        "-vn",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        str(output_path),
+    ]
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    except FileNotFoundError:
+        raise ValueError("ffmpeg not found — install ffmpeg to normalize audio for MacWhisper") from None
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip()
+        raise ValueError(f"ffmpeg failed normalizing {audio_path} for MacWhisper: {detail}") from exc
+    return output_path
+
+
+def call_parakeet_transcribe(
+    audio_path: Path,
+    language: str | None = None,
+    json_output_path: Path | None = None,
+) -> str:
+    """Transcribe using MacWhisper Parakeet, return transcript markdown."""
+    del language
+    mw_bin = shutil.which("mw")
+    if not mw_bin:
+        raise FileNotFoundError("MacWhisper CLI (`mw`) not found.")
+
+    with tempfile.TemporaryDirectory(prefix="notes-macwhisper-") as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        macwhisper_audio_path = normalize_audio_for_macwhisper(audio_path, tmp_path)
+        md_out = tmp_path / "transcript.md"
+        json_out = json_output_path or (tmp_path / "transcript.json")
+        if json_output_path:
+            json_output_path.parent.mkdir(parents=True, exist_ok=True)
+        command = [
+            mw_bin,
+            "transcribe",
+            str(macwhisper_audio_path),
+            "--model",
+            "parakeet-pro:nvidia_parakeet-v3",
+            "--quiet",
+            "--md-out",
+            str(md_out),
+            "--json-out",
+            str(json_out),
+        ]
+        run_checked(command, label="MacWhisper Parakeet transcription")
+        if not md_out.is_file():
+            raise FileNotFoundError(f"MacWhisper produced no Markdown output at {md_out}")
+        return md_out.read_text(encoding="utf-8")
 
 
 def choose_transcribe_backend(choice: str) -> str:
@@ -1043,7 +1095,7 @@ def choose_transcribe_backend(choice: str) -> str:
         return "parakeet"
     hint = "Set GROQ_API_KEY (free at console.groq.com)."
     if is_macos():
-        hint += " Or install parakeet-mlx / mlx-whisper for local transcription."
+        hint += " Or install MacWhisper CLI (`mw`) with parakeet-pro:nvidia_parakeet-v3 for local transcription."
     raise ValueError(hint)
 
 
@@ -1079,22 +1131,98 @@ GROQ_STT_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 GROQ_MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
 GROQ_MAX_WAIT_SEC = 120  # Fall back to MLX if rate limit wait exceeds this
 GROQ_CHUNK_DURATION_SEC = 1800  # 30-minute chunks for splitting large files
+GROQ_AUDIO_SECONDS_PER_HOUR = 7200
+GROQ_AUDIO_SECONDS_PER_DAY = 28800
+
+
+class RateLimitError(ValueError):
+    """Raised when Groq rate limits make cloud transcription a bad bet."""
+
+    def __init__(self, message: str, *, details: dict[str, object] | None = None):
+        super().__init__(message)
+        self.details = details or {}
+
+
+def _parse_groq_headers(raw_headers: str) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for line in raw_headers.splitlines():
+        if ":" not in line:
+            continue
+        name, value = line.split(":", 1)
+        normalized = name.strip().lower()
+        if normalized:
+            headers[normalized] = value.strip()
+    return headers
+
+
+def _parse_retry_after_seconds(headers: dict[str, str], message: str) -> int | None:
+    retry_after = headers.get("retry-after")
+    if retry_after and retry_after.isdigit():
+        return int(retry_after)
+    match = re.search(r"in\s+(\d+)m(\d+)s", message)
+    if match:
+        return int(match.group(1)) * 60 + int(match.group(2)) + 5
+    match = re.search(r"in\s+(\d+)s", message)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _classify_groq_rate_limit_scope(message: str, headers: dict[str, str]) -> str:
+    lowered = message.lower()
+    header_text = " ".join(headers)
+    if any(token in lowered for token in (" per day", "daily", "asd")) or "day" in header_text:
+        return "daily"
+    if any(token in lowered for token in (" per hour", "hourly", "ash")) or "hour" in header_text:
+        return "hourly"
+    if "audio" in lowered or "audio" in header_text:
+        return "audio"
+    return "unknown"
+
+
+def _groq_rate_limit_details(
+    *,
+    message: str,
+    headers: dict[str, str] | None = None,
+    preflight: dict[str, object] | None = None,
+) -> dict[str, object]:
+    header_map = headers or {}
+    retry_after = _parse_retry_after_seconds(header_map, message)
+    rate_headers = {
+        key: value
+        for key, value in header_map.items()
+        if key == "retry-after" or key.startswith("x-ratelimit-")
+    }
+    details: dict[str, object] = {
+        "scope": _classify_groq_rate_limit_scope(message, header_map),
+        "retry_after_seconds": retry_after,
+        "headers": rate_headers,
+    }
+    details["daily_limit_status"] = "exhausted" if details["scope"] == "daily" else "not_checked" if preflight else "unknown"
+    details["hourly_limit_status"] = "exhausted" if details["scope"] == "hourly" else "unknown"
+    if preflight:
+        details["preflight"] = preflight
+    return details
 
 
 def _groq_transcribe_single(audio_path: Path, *, api_key: str, language: str | None) -> dict:
     """Transcribe a single audio file (must be under 25 MB) via Groq API."""
-    command = [
-        "curl", "-s", "--max-time", "600",
-        GROQ_STT_URL,
-        "-H", f"Authorization: Bearer {api_key}",
-        "-F", f"file=@{audio_path}",
-        "-F", "model=whisper-large-v3-turbo",
-        "-F", "response_format=verbose_json",
-    ]
-    if language:
-        command.extend(["-F", f"language={language}"])
+    with tempfile.TemporaryDirectory(prefix="notes-groq-response-") as tmp_dir:
+        headers_path = Path(tmp_dir) / "headers.txt"
+        command = [
+            "curl", "-s", "--max-time", "600",
+            "-D", str(headers_path),
+            GROQ_STT_URL,
+            "-H", f"Authorization: Bearer {api_key}",
+            "-F", f"file=@{audio_path}",
+            "-F", "model=whisper-large-v3-turbo",
+            "-F", "response_format=verbose_json",
+        ]
+        if language:
+            command.extend(["-F", f"language={language}"])
 
-    result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=660)
+        result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=660)
+        headers = _parse_groq_headers(headers_path.read_text(encoding="utf-8")) if headers_path.is_file() else {}
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
         raise ValueError(f"Groq API error: {detail}")
@@ -1109,15 +1237,12 @@ def _groq_transcribe_single(audio_path: Path, *, api_key: str, language: str | N
         msg = err.get("message", str(err))
         # Extract retry-after hint from rate limit messages
         if err.get("code") == "rate_limit_exceeded":
-            raise RateLimitError(msg)
+            raise RateLimitError(msg, details=_groq_rate_limit_details(message=msg, headers=headers))
         raise ValueError(f"Groq API error: {msg}")
 
+    if headers:
+        payload["_groq_rate_limit"] = _groq_rate_limit_details(message="", headers=headers)
     return payload
-
-
-class RateLimitError(ValueError):
-    """Raised when Groq rate limit is hit, so callers can back off."""
-    pass
 
 
 def probe_media_duration_seconds(path: Path) -> int:
@@ -1176,22 +1301,32 @@ def _merge_groq_payloads(chunk_results: list[tuple[dict, float]]) -> dict:
     """Merge multiple Groq payloads, adjusting segment timestamps by chunk offsets."""
     all_segments: list[dict] = []
     all_text_parts: list[str] = []
+    rate_limits: list[dict[str, object]] = []
 
     for payload, offset in chunk_results:
         text = payload.get("text", "")
         if text:
             all_text_parts.append(text.strip())
+        rate_limit = payload.get("_groq_rate_limit")
+        if isinstance(rate_limit, dict):
+            rate_limits.append(rate_limit)
         for seg in payload.get("segments", []):
             adjusted = dict(seg)
             adjusted["start"] = seg.get("start", 0) + offset
             adjusted["end"] = seg.get("end", 0) + offset
             all_segments.append(adjusted)
 
-    return {
+    merged = {
         "text": " ".join(all_text_parts),
         "segments": all_segments,
         "language": chunk_results[0][0].get("language") if chunk_results else None,
     }
+    if rate_limits:
+        merged["_groq_rate_limit"] = {
+            "chunks": rate_limits,
+            "latest": rate_limits[-1],
+        }
+    return merged
 
 
 def call_groq_transcribe(
@@ -1204,6 +1339,22 @@ def call_groq_transcribe(
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         raise ValueError("GROQ_API_KEY not set.")
+
+    duration_seconds = probe_media_duration_seconds(audio_path)
+    if duration_seconds >= GROQ_AUDIO_SECONDS_PER_HOUR:
+        preflight = {
+            "duration_seconds": duration_seconds,
+            "hourly_limit_seconds": GROQ_AUDIO_SECONDS_PER_HOUR,
+            "daily_limit_seconds": GROQ_AUDIO_SECONDS_PER_DAY,
+            "reason": "audio duration is at or above Groq hourly audio-seconds limit",
+        }
+        raise RateLimitError(
+            f"Groq preflight skipped: audio is {duration_seconds}s, hourly limit is {GROQ_AUDIO_SECONDS_PER_HOUR}s",
+            details=_groq_rate_limit_details(
+                message="preflight hourly ASH limit",
+                preflight=preflight,
+            ),
+        )
 
     file_size = audio_path.stat().st_size
     if file_size <= GROQ_MAX_FILE_SIZE:
@@ -1225,13 +1376,15 @@ def call_groq_transcribe(
                     payload = _groq_transcribe_single(chunk_path, api_key=api_key, language=language)
                     break
                 except RateLimitError as exc:
-                    wait = 180  # default 3 min
-                    match = re.search(r"in (\d+)m(\d+)s", str(exc))
-                    if match:
-                        wait = int(match.group(1)) * 60 + int(match.group(2)) + 5
+                    wait = int(exc.details.get("retry_after_seconds") or 180)
                     if wait > GROQ_MAX_WAIT_SEC:
                         raise RateLimitError(
-                            f"Rate limit wait {wait}s exceeds threshold {GROQ_MAX_WAIT_SEC}s"
+                            f"Rate limit wait {wait}s exceeds threshold {GROQ_MAX_WAIT_SEC}s",
+                            details={
+                                **exc.details,
+                                "retry_after_seconds": wait,
+                                "wait_threshold_seconds": GROQ_MAX_WAIT_SEC,
+                            },
                         ) from exc
                     print(f"    Rate limit, waiting {wait}s...", file=sys.stderr)
                     time.sleep(wait)
@@ -1582,6 +1735,7 @@ def cmd_audio(args: argparse.Namespace) -> int:
             groq_payload_to_transcript_markdown=groq_payload_to_transcript_markdown,
             groq_rate_limit_error=RateLimitError,
             is_macos=is_macos,
+            parakeet_available=parakeet_available,
             mlx_whisper_available=mlx_whisper_available,
             ensure_audio_transcription_available=ensure_audio_transcription_available,
             local_backend_language=local_backend_language,
@@ -1627,6 +1781,7 @@ def cmd_telegram(args: argparse.Namespace) -> int:
         call_groq_transcribe=call_groq_transcribe,
         groq_payload_to_transcript_markdown=groq_payload_to_transcript_markdown,
         is_macos=is_macos,
+        call_parakeet_transcribe=call_parakeet_transcribe,
         run_mlx_whisper=run_mlx_whisper,
         whisper_json_to_transcript_markdown=whisper_json_to_transcript_markdown,
         run_prepare_for_transcript=run_prepare_for_transcript,
