@@ -18,15 +18,27 @@ def find_existing_youtube_bundle(
     bundle_paths: Callable[[Path], dict[str, Path]],
 ) -> Path | None:
     video_id = extract_youtube_video_id(url)
-    if not video_id:
-        return None
-    candidates = sorted(
-        [path for path in output_root.glob(f"{video_id}-*") if path.is_dir()],
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
+    candidates: list[Path] = []
+    if video_id:
+        candidates.extend(path for path in output_root.glob(f"{video_id}-*") if path.is_dir())
+    for path in (output_root.iterdir() if output_root.is_dir() else []):
+        if not path.is_dir() or path in candidates:
+            continue
+        try:
+            metadata = load_json(path / "metadata.json") if (path / "metadata.json").is_file() else None
+        except (OSError, json.JSONDecodeError, ValueError):
+            metadata = None
+        if not isinstance(metadata, dict):
+            continue
+        metadata_video_id = str(metadata.get("id") or metadata.get("video_id") or "").strip()
+        metadata_url = str(metadata.get("webpage_url") or metadata.get("source_url") or "").strip()
+        source_url_path = bundle_paths(path)["source_url"]
+        source_url = source_url_path.read_text(encoding="utf-8").strip() if source_url_path.is_file() else ""
+        if (video_id and metadata_video_id == video_id) or metadata_url == url or source_url == url:
+            candidates.append(path)
     if not candidates:
         return None
+    candidates = sorted(candidates, key=lambda path: path.stat().st_mtime, reverse=True)
     for candidate in candidates:
         if bundle_paths(candidate)["transcript"].is_file():
             return candidate

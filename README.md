@@ -4,6 +4,17 @@
 
 Works on **macOS**, **Linux**, and **WSL**.
 
+## Project
+
+Notes Skill is a local-first study-notes pipeline for agent clients such as Codex.
+It keeps source ingestion, transcript preparation, extraction prompts, final HTML/Markdown assembly, and delivery checks in one reproducible repo.
+
+It is designed for:
+- long YouTube lectures and interviews
+- local transcripts, audio, and video files
+- batch course folders
+- recoverable agent runs with inspectable `run.json`, `trace.jsonl`, and stage files
+
 ## Install
 
 Fastest install:
@@ -84,7 +95,7 @@ See [RELEASE.md](RELEASE.md).
 | YouTube URL (with subs) | starter deps only |
 | Local `.md` / `.txt` | starter deps only |
 | Audio/video files (`.mp3`, `.m4a`, `.wav`, `.ogg`, `.opus`, `.mp4`, `.mov`, `.mkv`, `.webm`, `.avi`) | + audio transcription setup |
-| Batch (directory of files) | same as individual files |
+| Batch (directory of files) | prepares per-file bundles and indexes; final per-item completion is separate |
 | Telegram voice messages | + MCP setup |
 
 ## Audio transcription
@@ -97,11 +108,11 @@ export GROQ_API_KEY=your-key-here
 ```
 Free key at [console.groq.com](https://console.groq.com). Fast, no local dependencies.
 
-**Option B — MLX Whisper (macOS Apple Silicon only):**
+**Option B — MacWhisper Parakeet (macOS):**
 ```bash
-pip install mlx-whisper
+mw models select parakeet-pro:nvidia_parakeet-v3
 ```
-Runs locally, no API key needed. If Groq hits rate limits, the runner falls back to MLX Whisper automatically (macOS only).
+Runs locally, no API key needed. If Groq hits rate limits, the runner falls back to MacWhisper Parakeet automatically (macOS only).
 
 ## Batch mode
 
@@ -111,7 +122,8 @@ Process an entire course/folder at once:
 notes-runner batch /path/to/course/audio/ --language en --prepare --json
 ```
 
-Produces individual notes for each file + a `batch-index.html` with links.
+Current batch mode prepares one bundle per supported file and writes `batch-index.json` / `batch-index.html`.
+Treat it as batch prepare/index mode: final per-item extraction, assemble, and Telegram delivery are not a completed user-facing `/notes` result unless those final artifacts already exist for each item.
 
 ## CLI flags
 
@@ -120,6 +132,7 @@ Produces individual notes for each file + a `batch-index.html` with links.
 | `--title "Name"` | `audio`, `local` | Override bundle directory name |
 | `--language en` | `audio`, `batch`, `youtube` | Audio language hint (default: `ru`) |
 | `--transcribe-backend groq` | `audio`, `batch` | Force Groq API |
+| `--transcribe-backend parakeet` | `audio`, `batch` | Force MacWhisper Parakeet |
 | `--prepare` | all | Run chunking/prepare after transcription |
 | `--refresh` | all | Re-transcribe even if cached |
 
@@ -132,6 +145,8 @@ notes-runner status "$WORK_DIR" --json
 ```
 
 Safe local smoke-check without Telegram side effects:
+
+Use this only for local debug/smoke work. It is not the normal completion path for a user-facing `/notes` run when Telegram delivery is configured.
 
 ```bash
 NOTES_RUNNER_DISABLE_TELEGRAM=1 notes-runner assemble "$WORK_DIR" "$OUTPUT_MD" "$OUTPUT_HTML" "$TITLE" --skip-telegram --json
@@ -158,8 +173,7 @@ See [ADVANCED.md](ADVANCED.md) for:
 - Telegram voice messages
 - Telegram auto-delivery
 
-By default, generated notes are auto-delivered to the Telegram channel `Конспекты` (`-1003850136767`) when a compatible `digest-runner` is available.
-Use `config.json` only if you want to override that target or disable delivery for this machine.
+Telegram auto-delivery is opt-in. To enable it, copy `config.example.json` to your local `config.json`, set `"enabled": true`, and provide your own chat target.
 
 ## Safety note
 

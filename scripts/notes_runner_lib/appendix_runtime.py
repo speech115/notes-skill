@@ -6,6 +6,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Callable
 
+from .actionability_runtime import imperative_action_text, is_verbish_action, normalize_action_candidate_text
+
 
 def merge_manifest_parts(
     work_dir: Path,
@@ -31,11 +33,7 @@ def _split_manifest_values(value: str) -> list[str]:
 
 
 def _normalize_statement(value: str) -> str:
-    text = re.sub(r"\s+", " ", (value or "").strip())
-    text = re.sub(r"^\*\*[^*]+\*\*\s*:?\s*", "", text)
-    text = re.sub(r"^[—–-]\s*", "", text)
-    text = re.sub(r"\s*\*\([^)]+\)\*\s*$", "", text)
-    return text.rstrip(".").strip()
+    return normalize_action_candidate_text(value)
 
 
 def _limit_text(value: str, limit: int = 140) -> str:
@@ -79,39 +77,35 @@ def _is_placeholder_entity(value: str) -> bool:
     return False
 
 
-def _prepare_action_candidate_text(value: str) -> str:
-    text = _normalize_statement(value)
-    if not text:
-        return ""
-    if ":" in text:
-        prefix, suffix = text.split(":", 1)
-        prefix_lower = prefix.lower()
-        if any(marker in prefix_lower for marker in ("вопрос", "метод", "совет", "критерий", "практик", "диагност", "вывод", "предупреждение")):
-            suffix = re.sub(r"\s+", " ", suffix.strip().strip("«»\""))
-            if suffix:
-                text = suffix
-    return text.strip().strip("«»\"").rstrip(".")
+def _resource_description(resource: str, contexts: set[str]) -> str:
+    del contexts
+    normalized = re.sub(r"\s+", " ", resource.strip()).casefold()
+    publish_platforms = {
+        "instagram", "reels", "shorts", "tiktok", "telegram", "twitter", "x", "youtube",
+    }
+    if normalized in publish_platforms:
+        return "площадка или формат распространения контента"
+    if normalized in {"iphone", "fuji-film", "fujifilm"}:
+        return "технический или визуальный референс для съемки"
+    if normalized in {"corso", "great", "topless", "биомашины"}:
+        return "контентный референс для формата и подачи"
+    if normalized in {"need for speed underground 2", "король и шут"}:
+        return "культурный референс для образа, темпа или эстетики"
+    if normalized in {"ии", "роботы", "код"}:
+        return "тема или визуальный материал для объясняющего контента"
+    return "упоминается как внешний референс, инструмент или площадка"
 
 
-def _imperative_action_text(value: str) -> str:
-    text = _prepare_action_candidate_text(value)
-    if not text:
-        return ""
-    first = text.split(" ", 1)[0].strip("«»\".,:;!?").casefold()
-    if re.match(r"^(сделай|проверь|зафиксируй|запиши|определи|выбери|сравни|найди|ответь|сформулируй|вернись|ограничь|убери|избегай|попробуй|скажи|спроси|не)$", first):
-        return text
-    lowered = text.casefold()
-    for token, prefix in (
-        ("перв", "Зафиксируй "),
-        ("вопрос", "Ответь себе на вопрос: "),
-        ("мысл", "Запиши мысль: "),
-        ("страх", "Проверь страх: "),
-        ("роль", "Определи роль: "),
-        ("блокир", "Найди блокирующую мысль: "),
-    ):
-        if token in lowered:
-            return prefix + text[0].lower() + text[1:] if text else ""
-    return text
+def _person_description(name: str, contexts: set[str]) -> str:
+    if any("YouTube-автор" in context or "основной спикер" in context for context in contexts):
+        return "вероятный автор или основной спикер источника"
+    normalized = re.sub(r"\s+", " ", name.strip()).casefold()
+    normalized_stem = normalized[:-1] if re.fullmatch(r"[а-яё]+", normalized) and len(normalized) >= 5 else normalized
+    for context in contexts:
+        context_lower = context.casefold()
+        if normalized in context_lower or normalized_stem in context_lower:
+            return "участник или адресат идеи в обсуждении"
+    return "упоминается как человек, автор или культурный референс"
 
 
 def _score_action_candidate(text: str) -> int:
@@ -141,7 +135,7 @@ def _classify_action_bucket(text: str) -> str | None:
         return None
     if any(token in lowered for token in ("сегодня", "завтра", "прямо сейчас", "немедлен", "чернов", "зафиксир", "скажи себе", "представь", "сделать", "делать только это")):
         return "immediate"
-    if lowered.startswith(("сделай", "проверь", "зафиксируй", "запиши", "определи", "выбери", "ответь", "найди", "сформулируй")):
+    if is_verbish_action(text):
         return "immediate"
     if any(token in lowered for token in ("не сопротивля", "не бойся", "не пуг", "живого контакта", "возвращ", "не смиря")):
         return "ongoing"
@@ -172,6 +166,7 @@ def build_deterministic_appendix(
     header_seed = load_json_if_exists(work_dir / header_seed_filename) or {}
 
     name_contexts: dict[str, set[str]] = defaultdict(set)
+    fallback_name_contexts: dict[str, set[str]] = defaultdict(set)
     resource_contexts: dict[str, set[str]] = defaultdict(set)
     topic_counter: Counter[str] = Counter()
     topic_descriptions: dict[str, list[str]] = defaultdict(list)
@@ -217,7 +212,7 @@ def build_deterministic_appendix(
                     (row.get("action_check", ""), manifest_action_check),
                     (row.get("action_avoid", ""), manifest_action_avoid),
                 ):
-                    prepared = _imperative_action_text(candidate or "")
+                    prepared = imperative_action_text(candidate or "")
                     if prepared:
                         bucket.append(prepared)
 
@@ -263,14 +258,17 @@ def build_deterministic_appendix(
                         topic_descriptions[block_topic].append(statement)
                     for person in _extract_people_from_text(statement):
                         if not _is_placeholder_entity(person):
-                            name_contexts[person].add(block_topic or block_path.name)
+                            fallback_name_contexts[person].add(block_topic or block_path.name)
+
+    if not name_contexts and fallback_name_contexts:
+        name_contexts = fallback_name_contexts
 
     actions = {"immediate": [], "month": [], "ongoing": []}
     seen_actions: set[str] = set()
 
     def append_direct(bucket_name: str, lines: list[str]) -> None:
         for line in lines:
-            prepared = _imperative_action_text(line)
+            prepared = imperative_action_text(line)
             if not prepared:
                 continue
             key = prepared.casefold()
@@ -281,7 +279,7 @@ def build_deterministic_appendix(
 
     def append_scored(lines: list[str], min_score: int) -> None:
         for line in lines:
-            prepared = _prepare_action_candidate_text(line)
+            prepared = normalize_action_candidate_text(line)
             if not prepared:
                 continue
             if _score_action_candidate(prepared) < min_score:
@@ -298,7 +296,9 @@ def build_deterministic_appendix(
     append_direct("immediate", manifest_action_now)
     append_direct("month", manifest_action_check)
     append_direct("ongoing", manifest_action_avoid)
-    append_scored(block_candidate_actions, 2)
+    direct_action_count = sum(len(items) for items in actions.values())
+    if direct_action_count < 5:
+        append_scored(block_candidate_actions, 2)
     if sum(len(items) for items in actions.values()) < 5:
         append_scored(summary_lines, 3)
 
@@ -322,15 +322,13 @@ def build_deterministic_appendix(
         appendix_lines.extend(["", "## Люди"])
         if name_contexts:
             for name in sorted(name_contexts):
-                contexts = sorted(name_contexts[name])
-                appendix_lines.append(f"- **{name}:** {_limit_text('; '.join(contexts[:2]))}.")
+                appendix_lines.append(f"- **{name}:** {_person_description(name, name_contexts[name])}.")
         else:
             appendix_lines.append("- Явно названные люди не были извлечены из материалов.")
         appendix_lines.extend(["", "## Ресурсы"])
         if resource_contexts:
             for resource in sorted(resource_contexts):
-                contexts = sorted(resource_contexts[resource])
-                appendix_lines.append(f"- **{resource}:** {_limit_text('; '.join(contexts[:2]))}.")
+                appendix_lines.append(f"- **{resource}:** {_resource_description(resource, resource_contexts[resource])}.")
         else:
             appendix_lines.append("- Явно названные книги, инструменты или сервисы не были извлечены из материалов.")
     else:

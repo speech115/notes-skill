@@ -13,6 +13,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from notes_runner_lib.local_command_runtime import LocalCommandDependencies, run_local_command
+from notes_runner_lib.media_transcribe_runtime import copy_local_source
 
 
 class LocalCommandRuntimeTests(unittest.TestCase):
@@ -120,6 +121,18 @@ class LocalCommandRuntimeTests(unittest.TestCase):
             self.assertEqual(payload["bundle_dir"], str(bundle_dir))
             self.assertEqual(payload["trace_path"], str(trace_path))
             self.assertEqual(payload["note_id"], "file:test-note")
+
+    def test_copy_local_source_does_not_duplicate_original_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            source_path = tmp_path / "source.md"
+            bundle_dir = tmp_path / "bundle"
+            source_path.write_text("body", encoding="utf-8")
+
+            result = copy_local_source(source_path, bundle_dir)
+
+            self.assertEqual(result, source_path)
+            self.assertFalse((bundle_dir / "source").exists())
 
 
 if __name__ == "__main__":

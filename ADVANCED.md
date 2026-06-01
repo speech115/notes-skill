@@ -4,10 +4,10 @@ Starter mode supports YouTube (with subs) and local `.md`/`.txt`. Everything bel
 
 ## Audio transcription
 
-**Option A — Local MLX Whisper (Apple Silicon, no API key):**
+**Option A — Local MacWhisper Parakeet (macOS, no API key):**
 
 ```bash
-python3 -m pip install mlx-whisper
+mw models select parakeet-pro:nvidia_parakeet-v3
 ```
 
 **Option B — Groq Cloud API (any Mac, faster for large files):**
@@ -16,7 +16,7 @@ python3 -m pip install mlx-whisper
 export GROQ_API_KEY=your-key-here
 ```
 
-Get a free key at [console.groq.com](https://console.groq.com). If Groq hits rate limits (>2 min wait), the runner automatically falls back to local MLX Whisper.
+Get a free key at [console.groq.com](https://console.groq.com). If Groq hits rate limits (>2 min wait), the runner automatically falls back to local MacWhisper Parakeet.
 
 After setup, these commands work:
 
@@ -24,6 +24,7 @@ After setup, these commands work:
 notes-runner audio /path/to/file.mp3 --language en --prepare --json
 notes-runner audio /path/to/file.mp3 --title "Lecture 1" --prepare --json
 notes-runner audio /path/to/file.mp3 --transcribe-backend groq --prepare --json
+notes-runner audio /path/to/file.mp3 --transcribe-backend parakeet --prepare --json
 ```
 
 ## Batch processing
@@ -36,8 +37,9 @@ notes-runner batch /path/to/course/ --language en --prepare --json
 
 This will:
 - find all `.mp3`, `.m4a`, `.wav`, `.md`, `.txt` files in the directory
-- transcribe/prepare each one with progress reporting (`[1/8] file.mp3...`)
-- write `batch-index.json` and `batch-index.html` with links to all notes
+- transcribe/prepare one bundle per supported file with progress reporting (`[1/8] file.mp3...`)
+- write `batch-index.json` and `batch-index.html`
+- leave final extraction/assemble/Telegram completion as a per-item step unless the runner result explicitly includes final artifacts
 - reuse existing transcripts (skip already-processed files)
 
 The runner also checks for adjacent `.json` files (Whisper output) next to audio files and reuses them automatically.
@@ -78,7 +80,7 @@ Then the runner can use API transcription fallback for subtitle-poor videos.
 
 ## Telegram auto-delivery
 
-Telegram delivery is enabled by default for the private channel `Конспекты` (`-1003850136767`).
+Telegram delivery is opt-in and local to your machine. Configure it only after you have a compatible `digest-runner` and a chat target you control.
 
 To enable it:
 
@@ -89,7 +91,7 @@ To enable it:
 export NOTES_RUNNER_DIGEST_RUNNER=/absolute/path/to/digest-runner
 ```
 
-3. Optionally edit `~/.agents/skills/notes/config.json` if you want to override the default channel, caption behavior, or disable delivery.
+3. Copy `config.example.json` to your installed skill's `config.json`, then set `"enabled": true` and your own chat target.
    If you are on Codex-first install layout, this is usually `~/.codex/skills/notes/config.json`.
 
 Example:
@@ -98,14 +100,14 @@ Example:
 {
   "telegram_delivery": {
     "enabled": true,
-    "chat": "-1003850136767",
+    "chat": "@your_channel_or_chat_id",
     "mcp_url": "http://127.0.0.1:8799/mcp",
     "parse_mode": "md"
   }
 }
+```
 
 Set `"enabled": false` if you want to disable auto-delivery on this machine.
-```
 
 ## Telegram voice messages
 

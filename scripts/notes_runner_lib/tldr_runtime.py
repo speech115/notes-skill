@@ -9,18 +9,33 @@ from typing import Callable
 SUMMARY_LINE_RE = re.compile(r"^\s*(?:\d+[.)]|[-*])\s+(.+?)\s*$")
 
 
+def sanitize_user_facing_point(point: str) -> str:
+    cleaned = re.sub(r"\s+", " ", point).strip()
+    rewrites = [
+        (r"^Чанк фиксирует\b", "Обсуждение фиксирует"),
+        (r"^Этот чанк\b", "Эта часть обсуждения"),
+        (r"^В этом чанке\b", "В этой части обсуждения"),
+        (r"\bГлавный итог чанка\b", "Главный итог обсуждения"),
+        (r"\bв транскрипте\b", "в обсуждении"),
+    ]
+    for pattern, replacement in rewrites:
+        cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b[Чч]анк(?:а|е|и|ов|ом|у)?\b", "часть обсуждения", cleaned)
+    return cleaned
+
+
 def read_summary_points(summary_path: Path) -> list[str]:
     points: list[str] = []
     for raw_line in summary_path.read_text(encoding="utf-8", errors="replace").splitlines():
         match = SUMMARY_LINE_RE.match(raw_line)
         if match:
-            point = re.sub(r"\s+", " ", match.group(1)).strip()
+            point = sanitize_user_facing_point(match.group(1))
             if point:
                 points.append(point)
     if points:
         return points
     fallback = [
-        re.sub(r"\s+", " ", line.strip())
+        sanitize_user_facing_point(line)
         for line in summary_path.read_text(encoding="utf-8", errors="replace").splitlines()
         if line.strip()
     ]
@@ -140,6 +155,7 @@ def build_tldr_deterministically(
 __all__ = [
     "SUMMARY_LINE_RE",
     "read_summary_points",
+    "sanitize_user_facing_point",
     "target_tldr_count",
     "build_tldr_deterministically",
 ]

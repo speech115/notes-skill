@@ -50,7 +50,6 @@ def run_youtube_command(
     bundle_dir.mkdir(parents=True, exist_ok=True)
     paths = bundle_paths(bundle_dir)
     paths["subs_dir"].mkdir(parents=True, exist_ok=True)
-    paths["audio_dir"].mkdir(parents=True, exist_ok=True)
     run_context = start_bundle_run(
         bundle_dir,
         command="youtube",
@@ -161,6 +160,14 @@ def run_youtube_command(
                         "path": str(paths["raw_transcript"]),
                         "language": language_hint or "auto",
                     }
+
+        if audio_path is not None and audio_path.parent == paths["audio_dir"]:
+            audio_path.unlink(missing_ok=True)
+            try:
+                paths["audio_dir"].rmdir()
+            except OSError:
+                pass
+            audio_path = None
 
         transcript_acquisition_ms = ms_since(command_started)
         title = str(metadata.get("title") or metadata.get("id") or "YouTube notes")

@@ -19,11 +19,25 @@ WORK_DIR="${1:?Usage: assemble.sh <work_dir> <output_md> <output_html> <title>}"
 OUTPUT_MD="${2:?Missing output markdown path}"
 OUTPUT_HTML="${3:?Missing output HTML path}"
 TITLE="${4:?Missing title}"
+HTML_THEME="${5:-${NOTES_HTML_THEME:-classic}}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CSS_FILE="$SCRIPT_DIR/dark-theme.css"
-TEMPLATE="$SCRIPT_DIR/template.html"
 RUNNER_BIN="$SCRIPT_DIR/scripts/notes-runner"
+
+case "$HTML_THEME" in
+  classic)
+    CSS_FILE="$SCRIPT_DIR/dark-theme.css"
+    TEMPLATE="$SCRIPT_DIR/template.html"
+    ;;
+  longform)
+    CSS_FILE="$SCRIPT_DIR/longform-theme.css"
+    TEMPLATE="$SCRIPT_DIR/template-longform.html"
+    ;;
+  *)
+    echo "ERROR: Unsupported HTML theme: $HTML_THEME (expected classic or longform)" >&2
+    exit 2
+    ;;
+esac
 
 build_deterministic_appendix() {
   if [[ -f "$WORK_DIR/appendix.md" ]]; then
@@ -39,6 +53,20 @@ build_deterministic_appendix() {
   "$RUNNER_BIN" ensure-appendix "$WORK_DIR" >/dev/null
 }
 
+build_deterministic_header() {
+  if [[ -f "$WORK_DIR/header.md" ]]; then
+    return 0
+  fi
+
+  if [[ ! -x "$RUNNER_BIN" ]]; then
+    echo "WARNING: notes-runner not found — skipping deterministic header generation"
+    return 0
+  fi
+
+  echo "No header.md found — generating deterministic header via notes-runner"
+  "$RUNNER_BIN" build-header "$WORK_DIR" >/dev/null
+}
+
 # ─── Step 1: Validate inputs ───
 
 BLOCK_FILES=("$WORK_DIR"/chunk_*_block_*.md)
@@ -50,6 +78,7 @@ fi
 BLOCK_COUNT="${#BLOCK_FILES[@]}"
 echo "=== Notes Assembly v3 ==="
 echo "Blocks found: $BLOCK_COUNT"
+echo "HTML theme: $HTML_THEME"
 
 # ─── Step 2: Ensure manifests / appendix ───
 
@@ -70,6 +99,7 @@ else
 fi
 
 build_deterministic_appendix
+build_deterministic_header
 
 # ─── Step 3: Assemble Markdown with block renumbering ───
 
@@ -187,6 +217,10 @@ if [[ -n "$SOURCE_URL" ]]; then
 fi
 
 pandoc "${PANDOC_ARGS[@]}" "$OUTPUT_MD" -o "$OUTPUT_HTML"
+
+if [[ "$HTML_THEME" == "longform" ]]; then
+  python3 "$SCRIPT_DIR/scripts/notes_runner_lib/html_theme_runtime.py" "$OUTPUT_HTML"
+fi
 
 rm -f "$CSS_HEADER"
 

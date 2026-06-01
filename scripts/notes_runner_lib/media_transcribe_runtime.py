@@ -16,6 +16,81 @@ AUDIO_EXTENSIONS = {".m4a", ".mp3", ".wav", ".ogg", ".opus"}
 VIDEO_EXTENSIONS = {".webm", ".mp4", ".mkv", ".mov", ".avi"}
 
 
+TIMESTAMPED_TEXT_RE = re.compile(r"^\*([^*]+)\*\s+(.+)$")
+TERMINAL_PUNCT_RE = re.compile(r"[.!?\u2026]$")
+HARD_BREAK_RE = re.compile(r"[?!]$")
+SOFT_BREAK_RE = re.compile(r"[,;:\-\u2026]$")
+
+
+def _timestamp_to_seconds(timestamp: str) -> int | None:
+    parts = [part.strip() for part in timestamp.split(":")]
+    if len(parts) not in {2, 3}:
+        return None
+    try:
+        numbers = [int(part) for part in parts]
+    except ValueError:
+        return None
+    if len(numbers) == 2:
+        minutes, seconds = numbers
+        return minutes * 60 + seconds
+    hours, minutes, seconds = numbers
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def _should_merge_timestamped_lines(previous_text: str, current_text: str, gap_seconds: int | None) -> bool:
+    if gap_seconds is None or gap_seconds > 5:
+        return False
+    if HARD_BREAK_RE.search(previous_text):
+        return False
+
+    combined_text = f"{previous_text} {current_text}".strip()
+    if len(combined_text) > 220:
+        return False
+
+    current_starts_lower = bool(current_text[:1]) and current_text[:1].islower()
+    previous_has_terminal = TERMINAL_PUNCT_RE.search(previous_text) is not None
+    previous_is_short = len(previous_text) < 42
+    current_is_short = len(current_text) < 28
+    previous_is_soft = SOFT_BREAK_RE.search(previous_text) is not None
+
+    return (
+        previous_is_soft
+        or not previous_has_terminal
+        or previous_is_short
+        or current_is_short
+        or current_starts_lower
+    )
+
+
+def _merge_fragmented_timestamped_lines(lines: list[str]) -> list[str]:
+    merged: list[str] = []
+    for line in lines:
+        match = TIMESTAMPED_TEXT_RE.match(line)
+        if not match:
+            merged.append(line)
+            continue
+
+        timestamp, text = match.groups()
+        if merged:
+            previous_match = TIMESTAMPED_TEXT_RE.match(merged[-1])
+            if previous_match:
+                previous_timestamp, previous_text = previous_match.groups()
+                current_seconds = _timestamp_to_seconds(timestamp)
+                previous_seconds = _timestamp_to_seconds(previous_timestamp)
+                gap_seconds = (
+                    current_seconds - previous_seconds
+                    if current_seconds is not None and previous_seconds is not None
+                    else None
+                )
+                if _should_merge_timestamped_lines(previous_text, text, gap_seconds):
+                    merged[-1] = f"*{previous_timestamp}* {previous_text} {text}".strip()
+                    continue
+
+        merged.append(line)
+
+    return merged
+
+
 def normalize_transcript_text(text: str) -> str:
     """Clean up whisper-generated transcript text.
 
@@ -77,6 +152,7 @@ def normalize_transcript_text(text: str) -> str:
         index += 1
 
     if not entries:
+        lines = _merge_fragmented_timestamped_lines(lines)
         cleaned = "\n".join(lines).strip()
         return cleaned + "\n" if cleaned else ""
 
@@ -109,11 +185,8 @@ def normalize_transcript_text(text: str) -> str:
 
 
 def copy_local_source(source_path: Path, bundle_dir: Path) -> Path:
-    source_dir = bundle_dir / "source"
-    source_dir.mkdir(parents=True, exist_ok=True)
-    destination = source_dir / source_path.name
-    shutil.copy2(source_path, destination)
-    return destination
+    del bundle_dir
+    return source_path
 
 
 def _fallback_run_checked(

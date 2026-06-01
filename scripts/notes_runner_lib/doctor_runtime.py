@@ -53,7 +53,7 @@ def build_doctor_checks(
         checks[tool] = which(tool) is not None
 
     checks["GROQ_API_KEY"] = groq_api_key_present
-    checks["parakeet_mlx"] = parakeet_available() if macos else MACOS_ONLY_STATUS
+    checks["macwhisper_parakeet"] = parakeet_available() if macos else MACOS_ONLY_STATUS
     checks["mlx_whisper"] = mlx_whisper_available() if macos else MACOS_ONLY_STATUS
     checks["whisperx"] = which("whisperx") is not None
     checks["youtube_transcript_api"] = python_module_available("youtube_transcript_api")
@@ -66,7 +66,7 @@ def build_doctor_checks(
 
     checks["audio_transcription_ready"] = bool(
         checks["GROQ_API_KEY"]
-        or (macos and (checks["parakeet_mlx"] is True or checks["mlx_whisper"] is True))
+        or (macos and checks["macwhisper_parakeet"] is True)
     )
     return checks
 
@@ -84,7 +84,7 @@ def render_doctor_report(checks: Mapping[str, object]) -> str:
     if not bool(checks.get("audio_transcription_ready")):
         lines.append("  ! No audio transcription backend available.")
         if str(checks.get("platform") or "") == "darwin":
-            lines.append("    Install mlx-whisper: pip install mlx-whisper")
+            lines.append("    Install MacWhisper CLI (`mw`) and select parakeet-pro:nvidia_parakeet-v3")
             lines.append("    Or set GROQ_API_KEY (free at console.groq.com)")
         else:
             lines.append("    Set GROQ_API_KEY (free at console.groq.com)")

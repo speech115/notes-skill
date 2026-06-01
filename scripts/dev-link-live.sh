@@ -55,6 +55,36 @@ fi
 
 mkdir -p "$TARGET_DIR" "$TARGET_DIR/backups" "$TARGET_DIR/.ai"
 
+materialize_regular_file() {
+  local src="$1"
+  local dst="$2"
+  mkdir -p "$(dirname "$dst")"
+  rm -f "$dst"
+  cp -p "$src" "$dst"
+}
+
+materialize_linked_dir() {
+  local src="$1"
+  local dst="$2"
+  rm -rf "$dst"
+  mkdir -p "$dst"
+  while IFS= read -r rel; do
+    local src_child="$src/$rel"
+    local dst_child="$dst/$rel"
+    if [[ -d "$src_child" ]]; then
+      mkdir -p "$dst_child"
+    elif [[ "$src" == "$REPO_DIR/agents" && "$rel" == "openai.yaml" ]]; then
+      materialize_regular_file "$src_child" "$dst_child"
+    else
+      mkdir -p "$(dirname "$dst_child")"
+      ln -s "$src_child" "$dst_child"
+    fi
+  done < <(
+    cd "$src"
+    find . -mindepth 1 | sed 's#^\./##' | sort
+  )
+}
+
 readarray -t MANAGED_ENTRIES < <(
   python3 - <<'PY' "$REPO_DIR"
 from pathlib import Path
@@ -91,6 +121,14 @@ for entry in "${MANAGED_ENTRIES[@]}"; do
   src="$REPO_DIR/$entry"
   dst="$TARGET_DIR/$entry"
   mkdir -p "$(dirname "$dst")"
+  if [[ "$entry" == "agents" || "$entry" == "assets" ]]; then
+    materialize_linked_dir "$src" "$dst"
+    continue
+  fi
+  if [[ "$entry" == "SKILL.md" ]]; then
+    materialize_regular_file "$src" "$dst"
+    continue
+  fi
   if [[ -L "$dst" ]] && [[ "$(readlink "$dst")" == "$src" ]]; then
     continue
   fi

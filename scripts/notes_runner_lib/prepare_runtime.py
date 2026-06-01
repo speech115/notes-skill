@@ -9,6 +9,7 @@ PREPARE_STATE_FILENAMES = ("prepare_state.json",)
 PREPARE_PLAN_FILENAMES = ("prepare_plan.json",)
 CHUNK_BLOCK_PATTERN = re.compile(r"^chunk_([A-Za-z0-9]+)_block_\d+\.md$")
 MANIFEST_PATTERN = re.compile(r"^manifest_chunk_([A-Za-z0-9]+)\.tsv$")
+SUMMARY_PATTERN = re.compile(r"^summary_chunk_([A-Za-z0-9]+)\.md$")
 STAGE_STATE_DIRNAME = "stages"
 NOTE_CONTRACT_FILENAME = "note-contract.json"
 QUALITY_CHECKS_FILENAME = "quality-checks.json"
@@ -43,13 +44,40 @@ def execution_mode_for_plan(total_chunks: int, *, content_mode: str, duration_se
     if total_chunks <= 1:
         return "single"
     if content_mode == "monologue":
-        if duration_seconds and duration_seconds <= 18 * 60 and total_chunks <= 2:
-            return "single"
         if total_chunks <= 4 and (duration_seconds == 0 or duration_seconds <= 35 * 60):
             return "micro-multi"
+    if content_mode == "conversation" and total_chunks <= 5:
+        return "micro-multi"
     if total_chunks <= 3:
         return "micro-multi"
     return "multi"
+
+
+def _speaker_placeholder_count(payload: dict) -> int:
+    totals = payload.get("totals") if isinstance(payload.get("totals"), dict) else {}
+    totals_count = totals.get("speaker_markers")
+    if totals_count is not None:
+        try:
+            return max(0, int(totals_count))
+        except (TypeError, ValueError):
+            return 0
+
+    file_entries = payload.get("files")
+    if isinstance(file_entries, list):
+        count = 0
+        for item in file_entries:
+            if not isinstance(item, dict):
+                continue
+            try:
+                count += max(0, int(item.get("markers") or 0))
+            except (TypeError, ValueError):
+                continue
+        return count
+
+    try:
+        return max(0, int(payload.get("unique_speakers") or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def parse_prepare_report(report_path: Path) -> dict:
@@ -278,15 +306,20 @@ def collect_chunk_ids_from_files(work_dir: Path) -> set[str]:
         match = MANIFEST_PATTERN.match(path.name)
         if match:
             chunk_ids.add(match.group(1))
+    for path in work_dir.glob("summary_chunk_*.md"):
+        match = SUMMARY_PATTERN.match(path.name)
+        if match:
+            chunk_ids.add(match.group(1))
     return chunk_ids
 
 
 def infer_chunk_status(work_dir: Path, chunk_id: str, planned_chunk: dict | None) -> str:
     block_files = sorted(work_dir.glob(f"chunk_{chunk_id}_block_*.md"))
     manifest_exists = (work_dir / f"manifest_chunk_{chunk_id}.tsv").is_file()
+    summary_exists = (work_dir / f"summary_chunk_{chunk_id}.md").is_file()
 
     if planned_chunk is None:
-        if block_files or manifest_exists:
+        if block_files or manifest_exists or summary_exists:
             return "stale"
         return "missing"
 
@@ -299,8 +332,11 @@ def infer_chunk_status(work_dir: Path, chunk_id: str, planned_chunk: dict | None
     planned_fingerprint = str(planned_chunk.get("chunk_fingerprint") or "").strip()
 
     if sentinel:
+        if sentinel.get("completed") is not True:
+            return "partial" if block_files or manifest_exists or summary_exists else "missing"
+
         sentinel_fingerprint = str(sentinel.get("chunk_fingerprint") or "").strip()
-        if planned_fingerprint and sentinel_fingerprint and sentinel_fingerprint != planned_fingerprint:
+        if planned_fingerprint and sentinel_fingerprint != planned_fingerprint:
             return "stale"
 
         expected_outputs = sentinel.get("expected_outputs")
@@ -317,15 +353,15 @@ def infer_chunk_status(work_dir: Path, chunk_id: str, planned_chunk: dict | None
                 candidate = work_dir / candidate
             existing.append(candidate.exists())
 
-        if existing and all(existing) and (block_files or manifest_exists):
+        required_outputs_exist = bool(block_files) and manifest_exists and summary_exists
+        expected_outputs_exist = all(existing) if existing else True
+        if required_outputs_exist and expected_outputs_exist:
             return "ready"
-        if any(existing) or block_files or manifest_exists:
+        if any(existing) or block_files or manifest_exists or summary_exists:
             return "partial"
         return "missing"
 
-    if block_files and manifest_exists:
-        return "ready"
-    if block_files or manifest_exists:
+    if block_files or manifest_exists or summary_exists:
         return "partial"
     return "missing"
 
@@ -348,6 +384,7 @@ def build_chunk_statuses(work_dir: Path, chunk_plan: list[dict]) -> dict[str, di
             "status": infer_chunk_status(work_dir, chunk_id, planned_chunk),
             "block_files": [str(path) for path in sorted(work_dir.glob(f"chunk_{chunk_id}_block_*.md"))],
             "manifest": str(work_dir / f"manifest_chunk_{chunk_id}.tsv") if (work_dir / f"manifest_chunk_{chunk_id}.tsv").exists() else None,
+            "summary": str(work_dir / f"summary_chunk_{chunk_id}.md") if (work_dir / f"summary_chunk_{chunk_id}.md").exists() else None,
             "planned": chunk_id in planned_ids,
             "sentinel": str(Path(str(planned_chunk.get("stage_sentinel_path")))) if isinstance(planned_chunk, dict) and planned_chunk.get("stage_sentinel_path") else None,
             "chunk_fingerprint": planned_chunk.get("chunk_fingerprint") if isinstance(planned_chunk, dict) else None,
@@ -362,6 +399,84 @@ def stage_status_from_prepare_state(stage_statuses: dict, key: str, default: str
     return default
 
 
+def _path_from_payload(value: object) -> Path | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return Path(value).expanduser()
+
+
+def _assemble_outputs_from_payloads(payload: dict, sentinel: dict | None, bundle_state: dict | None) -> tuple[list[Path], list[Path]]:
+    md_candidates: list[Path] = []
+    html_candidates: list[Path] = []
+    for source in (sentinel, bundle_state):
+        if not isinstance(source, dict):
+            continue
+        direct_md = _path_from_payload(source.get("output_md"))
+        direct_html = _path_from_payload(source.get("output_html"))
+        if direct_md is not None:
+            md_candidates.append(direct_md)
+        if direct_html is not None:
+            html_candidates.append(direct_html)
+        outputs = source.get("outputs")
+        if isinstance(outputs, dict):
+            output_md = _path_from_payload(outputs.get("markdown"))
+            output_html = _path_from_payload(outputs.get("html"))
+            if output_md is not None:
+                md_candidates.append(output_md)
+            if output_html is not None:
+                html_candidates.append(output_html)
+    for key in ("suggested_output_md", "output_md"):
+        candidate = _path_from_payload(payload.get(key))
+        if candidate is not None:
+            md_candidates.append(candidate)
+    for key in ("suggested_output_html", "output_html"):
+        candidate = _path_from_payload(payload.get(key))
+        if candidate is not None:
+            html_candidates.append(candidate)
+    return list(dict.fromkeys(md_candidates)), list(dict.fromkeys(html_candidates))
+
+
+def infer_assemble_status(
+    work_dir: Path,
+    payload: dict,
+    *,
+    extraction_status: str,
+    tldr_status: str,
+) -> tuple[str, list[Path], list[Path]]:
+    explicit = payload.get("stage_statuses") if isinstance(payload.get("stage_statuses"), dict) else {}
+    overall_fingerprint = str(payload.get("fingerprint") or "")
+    assemble_sentinel = load_stage_sentinel(stage_sentinel_path(work_dir, "assemble"))
+    bundle_state: dict | None = None
+    bundle_dir_raw = str(payload.get("bundle_dir") or "").strip()
+    if bundle_dir_raw:
+        maybe_state = load_json_if_exists(Path(bundle_dir_raw).expanduser() / "run.json")
+        if isinstance(maybe_state, dict):
+            bundle_state = maybe_state
+    md_candidates, html_candidates = _assemble_outputs_from_payloads(payload, assemble_sentinel, bundle_state)
+    existing_md = [path for path in md_candidates if path.is_file()]
+    existing_html = [path for path in html_candidates if path.is_file()]
+
+    if not assemble_sentinel:
+        return stage_status_from_prepare_state(explicit, "assemble", "missing"), existing_md, existing_html
+    if assemble_sentinel.get("completed") is not True:
+        sentinel_status = "delivery-skipped" if assemble_sentinel.get("delivery_skipped") else "failed"
+        return sentinel_status, existing_md, existing_html
+
+    sentinel_fingerprint = str(assemble_sentinel.get("fingerprint") or "")
+    if sentinel_fingerprint and overall_fingerprint and sentinel_fingerprint != overall_fingerprint:
+        return "stale", existing_md, existing_html
+    if extraction_status != "ready" or tldr_status not in {"ready", "skipped"}:
+        return "stale", existing_md, existing_html
+    if not existing_md or not existing_html:
+        return "partial", existing_md, existing_html
+    telegram_delivery = bundle_state.get("telegram_delivery") if isinstance(bundle_state, dict) and isinstance(bundle_state.get("telegram_delivery"), dict) else {}
+    if telegram_delivery.get("success") is True:
+        return "ready", existing_md, existing_html
+    if assemble_sentinel.get("delivery_skipped") or str(telegram_delivery.get("reason") or "") == "skipped-by-request":
+        return "delivery-skipped", existing_md, existing_html
+    return "failed", existing_md, existing_html
+
+
 def build_stage_statuses(work_dir: Path, payload: dict, chunk_statuses: dict[str, dict]) -> dict[str, dict]:
     stage_hints = payload.get("stage_hints") if isinstance(payload.get("stage_hints"), dict) else {}
     explicit = payload.get("stage_statuses") if isinstance(payload.get("stage_statuses"), dict) else {}
@@ -370,12 +485,9 @@ def build_stage_statuses(work_dir: Path, payload: dict, chunk_statuses: dict[str
 
     speakers_file = work_dir / "speakers.txt"
     tldr_file = work_dir / "tldr.md"
-    html_outputs = list(work_dir.glob("*.html"))
-    md_outputs = list(work_dir.glob("*.md"))
     overall_fingerprint = str(payload.get("fingerprint") or "")
     speaker_sentinel = load_stage_sentinel(stage_sentinel_path(work_dir, "speaker-identification"))
     tldr_sentinel = load_stage_sentinel(stage_sentinel_path(work_dir, "tldr"))
-    assemble_sentinel = load_stage_sentinel(stage_sentinel_path(work_dir, "assemble"))
 
     planned_chunk_statuses = [chunk_statuses[chunk_id]["status"] for chunk_id in sorted(planned_ids) if chunk_id in chunk_statuses]
     if planned_chunk_statuses and all(status == "ready" for status in planned_chunk_statuses):
@@ -408,21 +520,14 @@ def build_stage_statuses(work_dir: Path, payload: dict, chunk_statuses: dict[str
     else:
         tldr_status = stage_status_from_prepare_state(explicit, "tldr", "missing")
 
-    if html_outputs:
-        assemble_status = "ready"
-        if extraction_status != "ready":
-            assemble_status = "stale"
-        elif tldr_file.is_file() and tldr_status != "ready":
-            assemble_status = "stale"
-        elif assemble_sentinel:
-            sentinel_fingerprint = str(assemble_sentinel.get("fingerprint") or "")
-            if sentinel_fingerprint and overall_fingerprint and sentinel_fingerprint != overall_fingerprint:
-                assemble_status = "stale"
-    else:
-        assemble_status = stage_status_from_prepare_state(explicit, "assemble", "missing")
-
     if extraction_status == "ready" and any(status != "ready" for status in planned_chunk_statuses):
         extraction_status = "partial"
+    assemble_status, md_outputs, html_outputs = infer_assemble_status(
+        work_dir,
+        payload,
+        extraction_status=extraction_status,
+        tldr_status=tldr_status,
+    )
 
     return {
         "speaker_identification": {
@@ -476,13 +581,15 @@ def build_execution_plan(payload: dict, chunk_statuses: dict[str, dict], stages:
         chunk_plan = []
 
     total_chunks = int(payload.get("total_chunks") or len(chunk_plan) or 0)
-    mode = str(payload.get("execution_mode") or "").strip() or execution_mode_for_plan(
+    inferred_mode = execution_mode_for_plan(
         total_chunks,
         content_mode=str(payload.get("content_mode") or "conversation"),
     )
+    persisted_mode = str(payload.get("execution_mode") or "").strip()
+    mode = inferred_mode if persisted_mode == "multi" and inferred_mode == "micro-multi" else persisted_mode or inferred_mode
     content_mode = str(payload.get("content_mode") or "conversation")
     next_action = determine_next_action(stages)
-    prompt_packs = payload.get("prompt_packs") if isinstance(payload.get("prompt_packs"), dict) else {}
+    prompt_packs = dict(payload.get("prompt_packs")) if isinstance(payload.get("prompt_packs"), dict) else {}
     header_seed = payload.get("header_seed") if isinstance(payload.get("header_seed"), dict) else {}
     note_contract = payload.get("note_contract") if isinstance(payload.get("note_contract"), dict) else {}
     quality_checks = payload.get("quality_checks") if isinstance(payload.get("quality_checks"), dict) else {}
@@ -517,11 +624,13 @@ def build_execution_plan(payload: dict, chunk_statuses: dict[str, dict], stages:
     extraction_status = str(stages["extraction"].get("status") or "missing")
     tldr_status = str(stages["tldr"].get("status") or "missing")
     assemble_status = str(stages["assemble"].get("status") or "missing")
+    speaker_placeholders_present = _speaker_placeholder_count(payload) > 0
 
     should_run_speaker = (
         mode in {"micro-multi", "multi"}
         and speaker_hint != "skip"
         and speaker_status not in {"ready", "skipped"}
+        and (speaker_hint == "required" or speaker_placeholders_present)
     )
     should_run_extraction = extraction_status != "ready"
     tldr_strategy = (
@@ -529,7 +638,13 @@ def build_execution_plan(payload: dict, chunk_statuses: dict[str, dict], stages:
         else "deterministic-merge" if mode == "micro-multi"
         else "agent"
     )
+    prompt_packs["tldr_strategy"] = tldr_strategy
+    if mode != "multi":
+        prompt_packs["tldr_agent"] = None
     should_run_tldr = mode in {"micro-multi", "multi"} and extraction_status == "ready" and tldr_status != "ready"
+    tldr_bounds = dict(note_contract.get("tldr")) if isinstance(note_contract.get("tldr"), dict) else {}
+    if tldr_bounds:
+        tldr_bounds["strategy"] = tldr_strategy
 
     assemble_blocked_by: list[str] = []
     if mode in {"micro-multi", "multi"} and should_run_speaker:
@@ -571,8 +686,20 @@ def build_execution_plan(payload: dict, chunk_statuses: dict[str, dict], stages:
             "strategy": tldr_strategy,
         },
         "replace_speakers": {
-            "before_tldr": mode in {"micro-multi", "multi"} and extraction_status == "ready" and tldr_status != "ready" and speaker_hint != "skip",
-            "after_tldr": mode in {"micro-multi", "multi"} and extraction_status == "ready" and tldr_status != "ready" and speaker_hint != "skip",
+            "before_tldr": (
+                mode in {"micro-multi", "multi"}
+                and extraction_status == "ready"
+                and tldr_status != "ready"
+                and speaker_hint != "skip"
+                and speaker_placeholders_present
+            ),
+            "after_tldr": (
+                mode in {"micro-multi", "multi"}
+                and extraction_status == "ready"
+                and tldr_status != "ready"
+                and speaker_hint != "skip"
+                and speaker_placeholders_present
+            ),
         },
         "title_header": {
             "should_run": assemble_status != "ready",
@@ -585,7 +712,7 @@ def build_execution_plan(payload: dict, chunk_statuses: dict[str, dict], stages:
         "contract": {
             "note_contract_path": payload.get("note_contract_path"),
             "quality_checks_path": payload.get("quality_checks_path"),
-            "tldr_bounds": note_contract.get("tldr") if isinstance(note_contract.get("tldr"), dict) else {},
+            "tldr_bounds": tldr_bounds,
             "prepare_quality": quality_checks.get("prepare") if isinstance(quality_checks.get("prepare"), dict) else {},
         },
         "assemble": {

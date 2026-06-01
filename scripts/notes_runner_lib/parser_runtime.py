@@ -35,6 +35,13 @@ def build_parser(
     tldr_parser.add_argument("work_dir", help="Work directory path.")
     tldr_parser.add_argument("--json", action="store_true", default=False, help="Emit JSON result.")
 
+    header_parser = subparsers.add_parser(
+        "build-header",
+        help="Build header.md deterministically for micro-multi work dirs.",
+    )
+    header_parser.add_argument("work_dir", help="Work directory path.")
+    header_parser.add_argument("--json", action="store_true", default=False, help="Emit JSON result.")
+
     appendix_parser = subparsers.add_parser(
         "ensure-appendix",
         help="Build appendix.md deterministically from manifests and summaries when needed.",
@@ -47,6 +54,12 @@ def build_parser(
     assemble_parser.add_argument("output_md", help="Output markdown path.")
     assemble_parser.add_argument("output_html", help="Output HTML path.")
     assemble_parser.add_argument("title", help="Document title.")
+    assemble_parser.add_argument(
+        "--html-theme",
+        choices=("classic", "longform"),
+        default="classic",
+        help="HTML rendering theme. Use classic for current output or longform for annotated reader output.",
+    )
     assemble_parser.add_argument("--send-to", default=None, help="Override Telegram chat target (e.g. @username or chat_id)")
     assemble_parser.add_argument(
         "--skip-telegram",
@@ -74,7 +87,7 @@ def build_parser(
     )
     youtube_parser.add_argument(
         "--transcribe-backend",
-        choices=("auto", "groq"),
+        choices=("auto", "groq", "parakeet"),
         default="auto",
         help="API backend for subtitle fallback transcription.",
     )
@@ -166,7 +179,7 @@ def build_parser(
     )
     audio_parser.add_argument(
         "--transcribe-backend",
-        choices=("auto", "groq"),
+        choices=("auto", "groq", "parakeet"),
         default="auto",
         help="API backend for transcription. When set, uses Groq instead of local whisper.",
     )
@@ -240,7 +253,7 @@ def build_parser(
     )
     auto_parser.add_argument(
         "--transcribe-backend",
-        choices=("auto", "groq"),
+        choices=("auto", "groq", "parakeet"),
         default="auto",
         help="API backend for YouTube subtitle fallback transcription.",
     )
@@ -286,7 +299,7 @@ def build_parser(
     )
     batch_parser.add_argument(
         "--transcribe-backend",
-        choices=("auto", "groq"),
+        choices=("auto", "groq", "parakeet"),
         default="auto",
         help="API backend for transcription.",
     )

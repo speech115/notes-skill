@@ -5,14 +5,11 @@ import re
 from pathlib import Path
 from typing import Callable
 
+from .actionability_runtime import is_verbish_action
 from .common import load_json_if_exists, write_json
 from .prepare_runtime import load_prepare_payload, note_contract_path, quality_checks_path
 
 HEADER_METADATA_LABELS = ("Автор", "Формат", "Тема", "Длительность", "Источник")
-ACTION_VERB_RE = re.compile(
-    r"^(?:сделай|проверь|зафиксируй|запиши|определи|выбери|сравни|найди|ответь|сформулируй|вернись|ограничь|убери|избегай|попробуй|скажи|спроси|не\b)",
-    re.IGNORECASE,
-)
 SUMMARY_LINE_RE = re.compile(r"^\s*(?:\d+[.)]|[-*])\s+(.+?)\s*$")
 
 
@@ -180,7 +177,7 @@ def compute_final_quality_checks(
         seen_case_titles.add(title)
 
     actions = _extract_checklist_actions(text)
-    verbish_actions = sum(1 for item in actions if ACTION_VERB_RE.match(item))
+    verbish_actions = sum(1 for item in actions if is_verbish_action(item))
     actionability_ratio = round(verbish_actions / len(actions), 2) if actions else 1.0
     duration_seconds = int(((prepare_payload.get("telemetry") or {}).get("duration_seconds") or 0))
     block_contract = note_contract.get("blocks") if isinstance(note_contract.get("blocks"), dict) else {}

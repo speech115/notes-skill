@@ -6,3 +6,5 @@ test-fixtures/
 .claude/settings.local.json
 notes-skill.zip
 *.test-backup
+.superpowers/
+Конспекты/

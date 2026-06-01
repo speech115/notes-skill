@@ -14,9 +14,9 @@
 Проверь:
 
 - `python3 scripts/notes-runner doctor --json`
-- есть ли `mlx_whisper`, `parakeet_mlx` или `GROQ_API_KEY`
+- есть ли `macwhisper_parakeet` или `GROQ_API_KEY`
 
-Если используешь autodetect языка, runner больше не должен пихать `auto` в локальный MLX CLI. Если это снова всплывёт, смотри `trace.jsonl` и командный stderr.
+Если используешь autodetect языка, runner больше не должен пихать `auto` в локальный transcriber. Если это снова всплывёт, смотри `trace.jsonl` и командный stderr.
 
 ## `assemble` упал и непонятно почему
 
@@ -47,6 +47,8 @@
 NOTES_RUNNER_DISABLE_TELEGRAM=1 python3 scripts/notes-runner assemble "$WORK_DIR" "$OUTPUT_MD" "$OUTPUT_HTML" "$TITLE" --skip-telegram --json
 ```
 
+Это debug-only ветка. Для нормального пользовательского `/notes` финал считается закрытым только после успешной Telegram-доставки.
+
 ## `promote-live` отказался работать
 
 Чаще всего это не баг, а dirty tree.
@@ -57,6 +59,27 @@ NOTES_RUNNER_DISABLE_TELEGRAM=1 python3 scripts/notes-runner assemble "$WORK_DIR
 - правильный ли target выбрался
 
 Скрипты теперь по умолчанию резолвят live dir так же, как `install.sh`: сначала `~/.codex/skills/notes`, потом существующие legacy install paths.
+
+## Skill не виден в Codex App
+
+Сначала проверь live install, а не repo:
+
+- `~/.codex/skills/notes/SKILL.md`
+- `~/.codex/skills/notes/agents/openai.yaml`
+
+Оба файла должны существовать как обычные файлы, не как symlink. Для `notes` это важно для discoverability внутри Codex App.
+
+Нормальный способ починки:
+
+```bash
+bash scripts/dev-link-live.sh
+```
+
+После этого можно быстро проверить индексатор без ручного тыканья в UI:
+
+```bash
+/Applications/Codex.app/Contents/Resources/codex debug prompt-input '' | rg '\- notes:'
+```
 
 ## `release-check` зелёный, но доверия нет
 

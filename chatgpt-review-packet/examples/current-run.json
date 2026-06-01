@@ -1,14 +1,14 @@
 {
   "updated_at": "2026-04-01T13:32:28.604933",
-  "bundle_dir": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5",
+  "bundle_dir": "/tmp/notes-skill-example/UIrx6qUYvhk-5",
   "title": "Мечтатель — 5 вопросов, которые изменят реальность",
   "video_id": "UIrx6qUYvhk",
   "source_kind": "youtube",
   "source_url": "https://www.youtube.com/watch?v=UIrx6qUYvhk",
-  "transcript_path": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5/transcript.md",
+  "transcript_path": "/tmp/notes-skill-example/UIrx6qUYvhk-5/transcript.md",
   "transcript_source": {
     "kind": "existing",
-    "path": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5/transcript.md"
+    "path": "/tmp/notes-skill-example/UIrx6qUYvhk-5/transcript.md"
   },
   "audio_path": null,
   "source_identity": {
@@ -39,8 +39,8 @@
       },
       "assemble": {
         "duration_ms": 1168,
-        "output_md": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5/Мечтатель — 5 вопросов, которые изменят реальность.md",
-        "output_html": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5/Мечтатель — 5 вопросов, которые изменят реальность.html",
+        "output_md": "/tmp/notes-skill-example/UIrx6qUYvhk-5/Мечтатель — 5 вопросов, которые изменят реальность.md",
+        "output_html": "/tmp/notes-skill-example/UIrx6qUYvhk-5/Мечтатель — 5 вопросов, которые изменят реальность.html",
         "telegram_success": false
       }
     }
@@ -63,7 +63,7 @@
     "chunk_plan": [
       {
         "id": "A",
-        "file": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5/transcript.md",
+        "file": "/tmp/notes-skill-example/UIrx6qUYvhk-5/transcript.md",
         "line_start": 1,
         "line_end": 302,
         "context_start": null,
@@ -81,7 +81,7 @@
       },
       {
         "id": "B",
-        "file": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5/transcript.md",
+        "file": "/tmp/notes-skill-example/UIrx6qUYvhk-5/transcript.md",
         "line_start": 303,
         "line_end": 604,
         "context_start": 279,
@@ -99,7 +99,7 @@
       },
       {
         "id": "C",
-        "file": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5/transcript.md",
+        "file": "/tmp/notes-skill-example/UIrx6qUYvhk-5/transcript.md",
         "line_start": 605,
         "line_end": 906,
         "context_start": 581,
@@ -117,7 +117,7 @@
       },
       {
         "id": "D",
-        "file": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5/transcript.md",
+        "file": "/tmp/notes-skill-example/UIrx6qUYvhk-5/transcript.md",
         "line_start": 907,
         "line_end": 1208,
         "context_start": 883,
@@ -200,11 +200,11 @@
           "creator": null
         }
       },
-      "bundle_dir": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5",
+      "bundle_dir": "/tmp/notes-skill-example/UIrx6qUYvhk-5",
       "raw_title": "5 ВОПРОСОВ, которые изменят твою РЕАЛЬНОСТЬ",
       "source_kind": null,
-      "suggested_output_md": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5/конспект.md",
-      "suggested_output_html": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5/конспект.html"
+      "suggested_output_md": "/tmp/notes-skill-example/UIrx6qUYvhk-5/конспект.md",
+      "suggested_output_html": "/tmp/notes-skill-example/UIrx6qUYvhk-5/конспект.html"
     },
     "source_identity": {
       "source_kind": "youtube",
@@ -224,29 +224,29 @@
     "telemetry": {
       "prepare_duration_ms": 33
     },
-    "bundle_dir": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5",
+    "bundle_dir": "/tmp/notes-skill-example/UIrx6qUYvhk-5",
     "reused": false
   },
   "outputs": {
-    "markdown": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5/Мечтатель — 5 вопросов, которые изменят реальность.md",
-    "html": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5/Мечтатель — 5 вопросов, которые изменят реальность.html",
-    "telegram_html": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5/Мечтатель — 5 вопросов, которые изменят реальность.html"
+    "markdown": "/tmp/notes-skill-example/UIrx6qUYvhk-5/Мечтатель — 5 вопросов, которые изменят реальность.md",
+    "html": "/tmp/notes-skill-example/UIrx6qUYvhk-5/Мечтатель — 5 вопросов, которые изменят реальность.html",
+    "telegram_html": "/tmp/notes-skill-example/UIrx6qUYvhk-5/Мечтатель — 5 вопросов, которые изменят реальность.html"
   },
   "telegram_delivery": {
     "enabled": false,
     "attempted": false,
     "success": false,
-    "chat": "-1003850136767",
+    "chat": "",
     "caption": "📝 Конспект видео: Мечтатель — 5 вопросов, которые изменят реальность\nhttps://www.youtube.com/watch?v=UIrx6qUYvhk",
     "parse_mode": "md",
     "mcp_url": "http://127.0.0.1:8799/mcp",
-    "runner": "/Users/sereja/Projects/families/telegram/telegram-digest/scripts/digest-runner",
-    "file_path": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5/Мечтатель — 5 вопросов, которые изменят реальность.html",
+    "runner": "/absolute/path/to/digest-runner",
+    "file_path": "/tmp/notes-skill-example/UIrx6qUYvhk-5/Мечтатель — 5 вопросов, которые изменят реальность.html",
     "result": {
-      "chat": "-1003850136767",
-      "file_path": "/Users/sereja/Downloads/конспекты/UIrx6qUYvhk-5/Мечтатель — 5 вопросов, которые изменят реальность.html",
+      "chat": "",
+      "file_path": "/tmp/notes-skill-example/UIrx6qUYvhk-5/Мечтатель — 5 вопросов, которые изменят реальность.html",
       "message_id": 39,
-      "chat_id": -1003850136767,
+      "chat_id": 123456789,
       "mcp_url": "http://127.0.0.1:8799/mcp"
     },
     "reason": "skipped-by-request"

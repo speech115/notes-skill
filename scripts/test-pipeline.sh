@@ -100,6 +100,43 @@ copy_fixture() {
   echo "$dst"
 }
 
+ensure_fixture_extraction_sentinels() {
+  local work_dir="$1"
+  run_py - "$work_dir" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+work_dir = Path(sys.argv[1])
+stage_dir = work_dir / "stages"
+stage_dir.mkdir(parents=True, exist_ok=True)
+chunk_ids = set()
+for path in work_dir.glob("chunk_*_block_*.md"):
+    match = re.match(r"chunk_([A-Za-z0-9]+)_block_\d+\.md$", path.name)
+    if match:
+        chunk_ids.add(match.group(1))
+for chunk_id in sorted(chunk_ids):
+    sentinel_path = stage_dir / f"extraction-{chunk_id}.json"
+    if sentinel_path.is_file():
+        continue
+    block_files = sorted(path.name for path in work_dir.glob(f"chunk_{chunk_id}_block_*.md"))
+    payload = {
+        "stage": "extraction",
+        "chunk_id": chunk_id,
+        "expected_outputs": [
+            f"manifest_chunk_{chunk_id}.tsv",
+            f"summary_chunk_{chunk_id}.md",
+            f"stages/extraction-{chunk_id}.json",
+        ],
+        "completed": True,
+        "completed_at": "fixture",
+        "block_files": block_files,
+    }
+    sentinel_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
 GENERATED_PREPARE_ROOT=""
 
 ensure_generated_prepare_root() {
@@ -575,6 +612,7 @@ test_status_complete() {
 
   local work_dir
   work_dir=$(copy_fixture "$FIXTURES/single-chunk")
+  ensure_fixture_extraction_sentinels "$work_dir"
   local status_json="$work_dir/status_out.json"
 
   if ! $RUN_CMD status "$work_dir" --json > "$status_json" 2>/dev/null; then
@@ -634,6 +672,7 @@ test_status_prefers_observed_ready_chunks() {
 
   local work_dir
   work_dir=$(copy_fixture "$FIXTURES/multi-chunk")
+  ensure_fixture_extraction_sentinels "$work_dir"
   python3 - <<PY >/dev/null
 import json
 from pathlib import Path
@@ -780,7 +819,7 @@ test_assemble_single() {
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Test Single Chunk" --json > "$tmpout/result.json" 2>/dev/null; then
+  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Test Single Chunk" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null; then
     fail "T09" "assemble exited non-zero"; return
   fi
 
@@ -816,7 +855,7 @@ test_assemble_multi() {
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Test Multi Chunk" --json > "$tmpout/result.json" 2>/dev/null; then
+  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Test Multi Chunk" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null; then
     fail "T10" "assemble exited non-zero"; return
   fi
 
@@ -836,6 +875,45 @@ test_assemble_multi() {
   fi
 
   if [[ -z "$errors" ]]; then pass "T10"; else fail "T10" "$errors"; fi
+}
+
+# ── T10b: assemble HTML themes ─────────────────────────────────────────────
+test_assemble_html_themes() {
+  echo -e "${BOLD}T10b: assemble classic and longform HTML themes${RESET}"
+  if [[ ! -d "$FIXTURES/multi-chunk" ]]; then skip "T10b" "fixture missing"; return; fi
+
+  local work_dir
+  work_dir=$(copy_fixture "$FIXTURES/multi-chunk")
+  local tmpout
+  tmpout=$(mk_tmpdir)
+  local classic_md="$tmpout/classic.md"
+  local classic_html="$tmpout/classic.html"
+  local longform_md="$tmpout/longform.md"
+  local longform_html="$tmpout/longform.html"
+
+  if ! $RUN_CMD assemble "$work_dir" "$classic_md" "$classic_html" "Classic Theme" --html-theme classic --skip-telegram --json > "$tmpout/classic.json" 2>/dev/null; then
+    fail "T10b" "classic assemble exited non-zero"; return
+  fi
+  if ! $RUN_CMD assemble "$work_dir" "$longform_md" "$longform_html" "Longform Theme" --html-theme longform --skip-telegram --json > "$tmpout/longform.json" 2>/dev/null; then
+    fail "T10b" "longform assemble exited non-zero"; return
+  fi
+
+  local errors=""
+  [[ -f "$classic_html" ]] || errors+="no classic HTML; "
+  [[ -f "$longform_html" ]] || errors+="no longform HTML; "
+
+  if [[ -f "$classic_html" ]]; then
+    grep -q '<html' "$classic_html" || errors+="classic invalid HTML; "
+    grep -q 'note-page' "$classic_html" && errors+="classic contains longform page class; "
+  fi
+  if [[ -f "$longform_html" ]]; then
+    grep -q '<html' "$longform_html" || errors+="longform invalid HTML; "
+    grep -q 'note-page' "$longform_html" || errors+="longform missing note-page; "
+    grep -q 'note-chapter' "$longform_html" || errors+="longform missing note-chapter; "
+    grep -q 'note-appendix' "$longform_html" || errors+="longform missing note-appendix; "
+  fi
+
+  if [[ -z "$errors" ]]; then pass "T10b"; else fail "T10b" "$errors"; fi
 }
 
 # ── T11: assemble with no-frontmatter blocks ──────────────────────────────
@@ -870,7 +948,7 @@ BLOCK
   local out_html="$tmpout/output.html"
   local stderr_log="$tmpout/stderr.log"
 
-  $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "No Frontmatter Test" --json > "$tmpout/result.json" 2>"$stderr_log"
+  $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "No Frontmatter Test" --skip-telegram --json > "$tmpout/result.json" 2>"$stderr_log"
   local exit_code=$?
 
   local errors=""
@@ -917,7 +995,7 @@ BLOCK
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "No Manifest Test" --json > "$tmpout/result.json" 2>/dev/null
+  $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "No Manifest Test" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null
   local exit_code=$?
 
   local errors=""
@@ -974,7 +1052,7 @@ SUMMARY
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "No Actions Test" --json > "$tmpout/result.json" 2>/dev/null; then
+  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "No Actions Test" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null; then
     fail "T12b" "assemble exited non-zero"; return
   fi
 
@@ -1030,7 +1108,7 @@ SUMMARY
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Appendix Schema Test" --json > "$tmpout/result.json" 2>/dev/null; then
+  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Appendix Schema Test" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null; then
     fail "T12ba" "assemble exited non-zero"; return
   fi
 
@@ -1089,7 +1167,7 @@ SUMMARY
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Numbered Actions Test" --json > "$tmpout/result.json" 2>/dev/null; then
+  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Numbered Actions Test" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null; then
     fail "T12bb" "assemble exited non-zero"; return
   fi
 
@@ -1202,7 +1280,7 @@ EOF
   local out_html="$tmpout/output.html"
   local json_out="$tmpout/result.json"
 
-  $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Strict Contract Test" --json > "$json_out" 2>/dev/null
+  $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Strict Contract Test" --skip-telegram --json > "$json_out" 2>/dev/null
   local exit_code=$?
 
   local errors=""
@@ -1243,7 +1321,7 @@ SUMMARY
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Manifest V2 Test" --json > "$tmpout/result.json" 2>/dev/null; then
+  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "Manifest V2 Test" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null; then
     fail "T12cb" "assemble exited non-zero"; return
   fi
 
@@ -1368,7 +1446,7 @@ test_e2e_youtube_short() {
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "E2E Short Test" --json > "$tmpout/result.json" 2>/dev/null; then
+  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "E2E Short Test" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null; then
     fail "T15" "assemble failed"; return
   fi
 
@@ -1397,7 +1475,7 @@ test_e2e_local_multichunk() {
   local out_md="$tmpout/output.md"
   local out_html="$tmpout/output.html"
 
-  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "E2E Multi Chunk" --json > "$tmpout/result.json" 2>/dev/null; then
+  if ! $RUN_CMD assemble "$work_dir" "$out_md" "$out_html" "E2E Multi Chunk" --skip-telegram --json > "$tmpout/result.json" 2>/dev/null; then
     fail "T16" "assemble failed"; return
   fi
 
@@ -1463,6 +1541,7 @@ test_replace_collision
 test_replace_no_speakers
 test_assemble_single
 test_assemble_multi
+test_assemble_html_themes
 test_assemble_no_frontmatter
 test_assemble_no_manifest
 test_appendix_no_invented_actions
