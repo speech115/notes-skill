@@ -1,181 +1,199 @@
-# Notes Skill
+<h1 align="center">Notes Skill</h1>
 
-`/notes` skill for local coding agents. Turns YouTube videos, audio/video files, and text transcripts into detailed study packages with timestamped blocks, TL;DR, and appendix.
+<p align="center">
+  A local-first <code>/notes</code> skill for turning YouTube videos, transcripts, audio, and video into structured study notes.
+</p>
 
-Works on **macOS**, **Linux**, and **WSL**.
+<p align="center">
+  <a href="https://github.com/speech115/notes-skill/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/speech115/notes-skill?style=flat-square"></a>
+  <a href="https://github.com/speech115/notes-skill"><img alt="Public repository" src="https://img.shields.io/badge/repo-public-2ea44f?style=flat-square"></a>
+  <img alt="Platforms" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20WSL-111827?style=flat-square">
+  <img alt="Local first" src="https://img.shields.io/badge/local--first-agent%20workflow-2563eb?style=flat-square">
+</p>
 
-## Project
+---
 
-Notes Skill is a local-first study-notes pipeline for agent clients such as Codex.
-It keeps source ingestion, transcript preparation, extraction prompts, final HTML/Markdown assembly, and delivery checks in one reproducible repo.
+Notes Skill is a reproducible notes pipeline for coding agents such as Codex. It ingests source material, prepares transcript chunks, gives agents precise extraction prompts, assembles Markdown/HTML notes, and records enough state to resume or debug a run later.
 
-It is designed for:
-- long YouTube lectures and interviews
-- local transcripts, audio, and video files
-- batch course folders
-- recoverable agent runs with inspectable `run.json`, `trace.jsonl`, and stage files
+Use it when you want detailed study notes, not a short summary.
 
-## Install
+## Highlights
 
-Fastest install:
+| Capability | What it gives you |
+| --- | --- |
+| YouTube notes | Uses available subtitles first, with advanced fallback transcription when configured. |
+| Local media notes | Transcribes `.mp3`, `.m4a`, `.wav`, `.mp4`, `.mov`, `.mkv`, `.webm`, and more. |
+| Transcript notes | Turns `.md` / `.txt` transcripts into structured notes with timestamps and sections. |
+| Long-form coverage | Splits long lectures/interviews into agent-friendly chunks instead of compressing everything away. |
+| Recoverable runs | Writes `run.json`, `timeline.jsonl`, `trace.jsonl`, and stage files for inspection and resume. |
+| Optional delivery | Can send final HTML to Telegram when you explicitly configure a local delivery target. |
+
+## Quick Start
+
+Install from GitHub:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/speech115/notes-skill/main/install.sh | bash
 ```
 
-That is the intended Codex flow. It installs the skill, runs a smoke check, and tells you whether `notes-runner` is globally available.
+Restart your agent client, then run:
 
-Local checkout works too:
-
-```bash
-cd /path/to/notes-skill
-bash ./install.sh
+```text
+/notes https://www.youtube.com/watch?v=...
+/notes /absolute/path/to/transcript.md
+/notes /absolute/path/to/lecture.mp3
+/notes /absolute/path/to/recording.mp4
 ```
 
-Install target order:
-- keep an existing install where it already lives
-- otherwise prefer `$CODEX_HOME/skills/notes` (usually `~/.codex/skills/notes`)
-- fall back to `~/.agents/skills/notes` or `~/.claude/skills/notes` only when those already exist
+The installer runs a smoke check and prints whether `notes-runner` is available on `PATH`.
 
 ## Requirements
 
-**macOS:**
+**macOS**
+
 ```bash
 brew install python pandoc yt-dlp ffmpeg
 ```
 
-**Linux / WSL:**
+**Linux / WSL**
+
 ```bash
 sudo apt install python3 pandoc ffmpeg
 pip install yt-dlp
 ```
 
-**Windows:** Install [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) first, then follow Linux instructions.
+**Windows**
 
-## First run
+Install [WSL](https://learn.microsoft.com/en-us/windows/wsl/install), then follow the Linux instructions.
 
-Restart your agent client, then:
+## How It Works
+
+```mermaid
+flowchart LR
+  source["Source<br/>YouTube, transcript, audio, video"] --> ingest["Ingest<br/>metadata and transcript"]
+  ingest --> prepare["Prepare<br/>chunks, prompts, contract"]
+  prepare --> agents["Agent extraction<br/>blocks, summaries, TL;DR"]
+  agents --> assemble["Assemble<br/>Markdown + HTML"]
+  assemble --> checks["Quality checks<br/>contract validation"]
+  checks --> output["Output bundle<br/>notes, trace, run state"]
+```
+
+Each run produces a bundle with the final files and debugging state:
 
 ```text
-/notes https://www.youtube.com/watch?v=...
-/notes /absolute/path/to/file.md
-/notes /path/to/lecture.mp3
-/notes /path/to/recording.mp4
+run.json
+timeline.jsonl
+trace.jsonl
+transcript.md
+work/prepare_state.json
+work/stages/*.json
+конспект.md
+конспект.html
 ```
 
-Or just say "сделай конспект" with a URL or file path.
+## Supported Inputs
 
-The installer already runs a doctor smoke check for you. If you want to rerun it manually:
+| Input | Starter setup | Extra setup |
+| --- | --- | --- |
+| YouTube URL with subtitles | Yes | None |
+| Local `.md` / `.txt` transcript | Yes | None |
+| Audio/video file | No | Groq API or MacWhisper Parakeet |
+| Directory batch | Partial | Prepares per-file bundles and an index |
+| Telegram voice/audio | No | Telegram MCP + transcription setup |
 
-```bash
-notes-runner doctor
-```
+Batch mode prepares one bundle per supported file and writes `batch-index.json` / `batch-index.html`. Final per-item extraction, assembly, and delivery are separate unless those final artifacts already exist for each item.
 
-If `notes-runner` is not on PATH yet, use the full path the installer prints at the end.
+## Audio Transcription
 
-## Stable workflow
+Pick one backend for audio/video files.
 
-Treat this repo as the single source of truth. Do not patch the live skill directory by hand.
+**Groq API: cross-platform and fast**
 
-- Work in a feature branch.
-- For active local development, link the live skill once:
-  - `scripts/dev-link-live.sh`
-- Before `promote-live`, make sure `git status --short` is clean.
-- `scripts/promote-live.sh --allow-dirty` is an escape hatch for forensics, not the happy path.
-- Run `scripts/release-check.sh`.
-- Promote the checked-out repo to the live skill with `scripts/promote-live.sh`.
-- Tag the stable commit after the live smoke check passes.
-
-See [RELEASE.md](RELEASE.md).
-
-## What works
-
-| Input | Requirements |
-|-------|-------------|
-| YouTube URL (with subs) | starter deps only |
-| Local `.md` / `.txt` | starter deps only |
-| Audio/video files (`.mp3`, `.m4a`, `.wav`, `.ogg`, `.opus`, `.mp4`, `.mov`, `.mkv`, `.webm`, `.avi`) | + audio transcription setup |
-| Batch (directory of files) | prepares per-file bundles and indexes; final per-item completion is separate |
-| Telegram voice messages | + MCP setup |
-
-## Audio transcription
-
-Required for audio/video files. Pick one:
-
-**Option A — Groq API (all platforms, recommended):**
 ```bash
 export GROQ_API_KEY=your-key-here
 ```
-Free key at [console.groq.com](https://console.groq.com). Fast, no local dependencies.
 
-**Option B — MacWhisper Parakeet (macOS):**
+**MacWhisper Parakeet: local on macOS**
+
 ```bash
 mw models select parakeet-pro:nvidia_parakeet-v3
 ```
-Runs locally, no API key needed. If Groq hits rate limits, the runner falls back to MacWhisper Parakeet automatically (macOS only).
 
-## Batch mode
+When both are available, the runner can use Groq first and fall back to MacWhisper Parakeet on macOS if needed.
 
-Process an entire course/folder at once:
-
-```bash
-notes-runner batch /path/to/course/audio/ --language en --prepare --json
-```
-
-Current batch mode prepares one bundle per supported file and writes `batch-index.json` / `batch-index.html`.
-Treat it as batch prepare/index mode: final per-item extraction, assemble, and Telegram delivery are not a completed user-facing `/notes` result unless those final artifacts already exist for each item.
-
-## CLI flags
-
-| Flag | Commands | Description |
-|------|----------|-------------|
-| `--title "Name"` | `audio`, `local` | Override bundle directory name |
-| `--language en` | `audio`, `batch`, `youtube` | Audio language hint (default: `ru`) |
-| `--transcribe-backend groq` | `audio`, `batch` | Force Groq API |
-| `--transcribe-backend parakeet` | `audio`, `batch` | Force MacWhisper Parakeet |
-| `--prepare` | all | Run chunking/prepare after transcription |
-| `--refresh` | all | Re-transcribe even if cached |
-
-## Troubleshooting
+## Common Commands
 
 ```bash
-notes-runner doctor        # check all prerequisites
-notes-runner doctor --json # machine-readable output
+notes-runner doctor
+notes-runner doctor --json
 notes-runner status "$WORK_DIR" --json
+notes-runner batch /path/to/course --language en --prepare --json
 ```
 
-Safe local smoke-check without Telegram side effects:
+Useful flags:
 
-Use this only for local debug/smoke work. It is not the normal completion path for a user-facing `/notes` run when Telegram delivery is configured.
+| Flag | Commands | Purpose |
+| --- | --- | --- |
+| `--title "Name"` | `audio`, `local` | Override the bundle title. |
+| `--language en` | `audio`, `batch`, `youtube` | Set the transcription language hint. Default is `ru`. |
+| `--transcribe-backend groq` | `audio`, `batch` | Force Groq transcription. |
+| `--transcribe-backend parakeet` | `audio`, `batch` | Force MacWhisper Parakeet. |
+| `--prepare` | all source commands | Run chunking and prompt preparation. |
+| `--refresh` | all source commands | Re-ingest or re-transcribe instead of reusing cached state. |
+
+## Local Development
+
+This repository is the source of truth. The installed skill directory is a deployment target.
 
 ```bash
-NOTES_RUNNER_DISABLE_TELEGRAM=1 notes-runner assemble "$WORK_DIR" "$OUTPUT_MD" "$OUTPUT_HTML" "$TITLE" --skip-telegram --json
+bin/status
+python3 -m unittest discover -s tests -p 'test_*.py'
+bash scripts/release-check.sh
 ```
 
-Debug artifacts worth opening first:
+For active local development, link the live skill once:
 
-- `run.json` — short bundle summary
-- `timeline.jsonl` — one line per run of this note
-- `runs/<run_id>.json` — full snapshot for a specific note revision
-- `trace.jsonl` — append-only stage trace
-- `work/prepare_state.json` and `work/stages/*.json` — orchestration state
+```bash
+bash scripts/dev-link-live.sh
+```
 
-When `notes-runner` is launched from Codex, it auto-attaches the current `CODEX_THREAD_ID` as an external ref in the note history.
-You can add extra refs manually with `NOTES_RUNNER_EXTERNAL_REF` or `NOTES_RUNNER_EXTERNAL_REFS`.
+Before promoting a release:
 
-More detail lives in [OBSERVABILITY.md](OBSERVABILITY.md) and [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+```bash
+git status --short
+bash scripts/release-check.sh
+bash scripts/promote-live.sh
+```
 
-## Advanced features
+`scripts/promote-live.sh --allow-dirty` is for forensic recovery, not the normal path.
 
-See [ADVANCED.md](ADVANCED.md) for:
-- speaker diarization
-- YouTube fallback transcription
-- Telegram voice messages
-- Telegram auto-delivery
+See [RELEASE.md](RELEASE.md), [OBSERVABILITY.md](OBSERVABILITY.md), and [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
-Telegram auto-delivery is opt-in. To enable it, copy `config.example.json` to your local `config.json`, set `"enabled": true`, and provide your own chat target.
+## Telegram Delivery
 
-## Safety note
+Telegram delivery is opt-in. Copy `config.example.json` to your local `config.json`, set `"enabled": true`, and provide a chat target you control.
 
-Do not copy someone else's `config.json`. Use `config.example.json` as template.
-Keep `config.json` local-only: it may contain Telegram delivery settings and should not be committed or shared.
+```json
+{
+  "telegram_delivery": {
+    "enabled": true,
+    "chat": "@your_channel_or_chat_id",
+    "mcp_url": "http://127.0.0.1:8799/mcp",
+    "parse_mode": "md"
+  }
+}
+```
+
+Keep `config.json` local-only. It may contain private delivery settings and should not be committed.
+
+## Project Status
+
+Current release: [v0.3.3](https://github.com/speech115/notes-skill/releases/tag/v0.3.3).
+
+The release gate expects:
+
+- `bin/status`
+- unit tests
+- `scripts/release-check.sh` with zero deterministic `SKIP`
+
+If `release-check` in quick mode reports `SKIP`, treat it as a harness bug.
