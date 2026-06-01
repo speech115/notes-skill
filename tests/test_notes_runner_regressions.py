@@ -459,6 +459,31 @@ class NotesRunnerRegressionTests(unittest.TestCase):
             self.assertEqual(args.path, str(video_path.resolve()))
             self.assertEqual(args.language, "auto")
 
+    def test_local_bundle_dir_uses_human_title_without_hash_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_root = Path(tmp_dir)
+            source_path = output_root / "Ефим — сессия 3 — 2 мая 2026.mp4"
+            source_path.write_bytes(b"media")
+
+            bundle_dir = self.runner.local_bundle_dir_for(
+                source_path,
+                "Ефим — сессия 3 — 2 мая 2026",
+                output_root,
+            )
+
+            self.assertEqual(bundle_dir.name, "Ефим — сессия 3 — 2 мая 2026")
+
+    def test_local_bundle_dir_adds_human_counter_for_collisions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_root = Path(tmp_dir)
+            (output_root / "Пирамида созвон").mkdir()
+            source_path = output_root / "other.m4a"
+            source_path.write_bytes(b"media")
+
+            bundle_dir = self.runner.local_bundle_dir_for(source_path, "Пирамида созвон", output_root)
+
+            self.assertEqual(bundle_dir.name, "Пирамида созвон (2)")
+
     def test_local_backend_language_omits_auto_for_local_transcribers(self) -> None:
         self.assertIsNone(self.runner.local_backend_language("auto"))
         self.assertIsNone(self.runner.local_backend_language(" AUTO "))

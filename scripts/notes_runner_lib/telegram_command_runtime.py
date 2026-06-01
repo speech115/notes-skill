@@ -78,11 +78,6 @@ def run_telegram_command(args: argparse.Namespace, *, deps: TelegramCommandDepen
     )
 
     try:
-        source_dir = bundle_dir / "source"
-        source_dir.mkdir(parents=True, exist_ok=True)
-        source_copy = source_dir / media_path.name
-        shutil.copy2(media_path, source_copy)
-
         deps.write_json(
             paths["metadata"],
             {
@@ -176,7 +171,8 @@ def run_telegram_command(args: argparse.Namespace, *, deps: TelegramCommandDepen
             "source_kind": "telegram",
             "source_path": str(media_path),
             "source_name": media_path.name,
-            "source_copy_path": str(source_copy),
+            "source_copy_path": None,
+            "source_retained": False,
             "metadata_path": str(paths["metadata"]),
             "transcript_path": str(transcript_path),
             "transcript_source": transcript_source,

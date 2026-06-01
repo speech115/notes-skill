@@ -201,6 +201,10 @@ from notes_runner_lib.note_contract_runtime import (
 from notes_runner_lib.parser_runtime import (
     build_parser as build_parser_impl,
 )
+from notes_runner_lib.cli_runtime import (
+    CommandHandler,
+    dispatch_command,
+)
 from notes_runner_lib.transcript_runtime import (
     clean_caption_text as clean_caption_text_impl,
     extract_transcript_segments as extract_transcript_segments_impl,
@@ -268,7 +272,7 @@ MANIFEST_PATTERN = re.compile(r"^manifest_chunk_([A-Za-z0-9]+)\.tsv$")
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 DEFAULT_TELEGRAM_MCP_URL = "http://127.0.0.1:8799/mcp"
 DEFAULT_TELEGRAM_CAPTION_TEMPLATE = ""
-DEFAULT_TELEGRAM_CHAT = "-1003850136767"
+DEFAULT_TELEGRAM_CHAT = ""
 MARKDOWN_H1_RE = re.compile(r"^\s*#\s+(.+?)\s*$")
 TITLE_TIMESTAMP_PREFIX_RE = re.compile(r"^(?:\*?\d{1,2}:\d{2}(?::\d{2})?\*?\s+)+", re.IGNORECASE)
 TITLE_SPEAKER_PREFIX_RE = re.compile(r"^(?:\*\*)?speaker\s+\d+(?:\*\*)?\s*:?\s*", re.IGNORECASE)
@@ -342,7 +346,7 @@ def ensure_audio_transcription_available(feature_name: str) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     return build_parser_impl(
-        default_output_root=str(Path.home() / "Downloads" / "конспекты"),
+        default_output_root=str(SCRIPT_REAL_PATH.parent.parent / "Конспекты"),
         default_telegram_mcp_url=DEFAULT_TELEGRAM_MCP_URL,
     )
 
@@ -446,6 +450,46 @@ def slugify(value: str, *, max_length: int = 72) -> str:
     return slug[:max_length].rstrip("-") or "notes"
 
 
+def human_folder_name(value: str, *, max_length: int = 96) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).strip()
+    text = re.sub(r"[\\/:*?\"<>|\x00-\x1f]+", " ", text)
+    text = re.sub(r"[_]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip(" .")
+    if not text:
+        text = "Конспект"
+    if len(text) <= max_length:
+        return text
+    trimmed = text[:max_length].rsplit(" ", 1)[0].strip(" .")
+    return trimmed or text[:max_length].strip(" .") or "Конспект"
+
+
+def bundle_identity_matches(bundle_dir: Path, identity: dict[str, str]) -> bool:
+    if not identity:
+        return False
+    metadata = load_json_if_exists(bundle_dir / "metadata.json") or {}
+    state = load_json_if_exists(bundle_dir / "run.json") or {}
+    for key, expected in identity.items():
+        if not expected:
+            continue
+        for source in (metadata, state):
+            actual = str(source.get(key) or "").strip()
+            if actual and actual == expected:
+                return True
+    return False
+
+
+def unique_human_bundle_dir(output_root: Path, base_name: str, *, identity: dict[str, str] | None = None) -> Path:
+    base = human_folder_name(base_name)
+    candidate = output_root / base
+    if not candidate.exists() or bundle_identity_matches(candidate, identity or {}):
+        return candidate
+    for index in range(2, 1000):
+        candidate = output_root / f"{base} ({index})"
+        if not candidate.exists() or bundle_identity_matches(candidate, identity or {}):
+            return candidate
+    raise ValueError(f"Could not choose an unused output folder name for: {base}")
+
+
 def extract_youtube_video_id(url: str) -> str | None:
     patterns = (
         r"(?:youtube\.com/watch\?(?:.*?&)?v=)([A-Za-z0-9_-]{11})",
@@ -486,13 +530,21 @@ def extract_youtube_metadata(url: str) -> dict:
 def bundle_dir_for(metadata: dict, output_root: Path) -> Path:
     video_id = str(metadata.get("id") or "").strip()
     title = str(metadata.get("title") or video_id or "youtube-notes").strip()
-    folder_name = f"{video_id}-{slugify(title)}" if video_id else slugify(title)
-    return output_root / folder_name
+    return unique_human_bundle_dir(
+        output_root,
+        title,
+        identity={
+            "id": video_id,
+            "video_id": video_id,
+            "webpage_url": str(metadata.get("webpage_url") or "").strip(),
+            "source_url": str(metadata.get("webpage_url") or "").strip(),
+        },
+    )
 
 
 def local_bundle_dir_for(source_path: Path, title: str, output_root: Path) -> Path:
-    path_hash = hashlib.sha1(str(source_path.expanduser().resolve()).encode("utf-8")).hexdigest()[:8]
-    return output_root / f"{slugify(title)}-{path_hash}"
+    resolved = str(source_path.expanduser().resolve())
+    return unique_human_bundle_dir(output_root, title, identity={"source_path": resolved})
 
 
 def note_contract_path(work_dir: Path) -> Path:
@@ -1646,33 +1698,37 @@ def copy_local_source(source_path: Path, bundle_dir: Path) -> Path:
     return copy_local_source_impl(source_path, bundle_dir)
 
 
+def _local_command_deps() -> LocalCommandDependencies:
+    return LocalCommandDependencies(
+        ensure_file=ensure_file,
+        file_looks_binary=file_looks_binary,
+        ensure_parent_dir=ensure_parent_dir,
+        infer_local_title=infer_local_title,
+        local_bundle_dir_for=local_bundle_dir_for,
+        bundle_paths=bundle_paths,
+        start_bundle_run=start_bundle_run,
+        copy_local_source=copy_local_source,
+        write_text=write_text,
+        write_json=write_json,
+        normalize_transcript_text=normalize_transcript_text,
+        read_text_file=read_text_file,
+        run_prepare_for_transcript=run_prepare_for_transcript,
+        attach_prepare_outputs=attach_prepare_outputs,
+        extract_prepare_duration_ms=extract_prepare_duration_ms,
+        write_bundle_state_snapshot=write_bundle_state_snapshot,
+        append_trace_event=append_trace_event,
+        finish_bundle_run=finish_bundle_run,
+        ms_since=ms_since,
+        audio_extensions=AUDIO_EXTENSIONS,
+        video_extensions=VIDEO_EXTENSIONS,
+        stdout=sys.stdout,
+    )
+
+
 def cmd_local(args: argparse.Namespace) -> int:
     return run_local_command(
         args,
-        deps=LocalCommandDependencies(
-            ensure_file=ensure_file,
-            file_looks_binary=file_looks_binary,
-            ensure_parent_dir=ensure_parent_dir,
-            infer_local_title=infer_local_title,
-            local_bundle_dir_for=local_bundle_dir_for,
-            bundle_paths=bundle_paths,
-            start_bundle_run=start_bundle_run,
-            copy_local_source=copy_local_source,
-            write_text=write_text,
-            write_json=write_json,
-            normalize_transcript_text=normalize_transcript_text,
-            read_text_file=read_text_file,
-            run_prepare_for_transcript=run_prepare_for_transcript,
-            attach_prepare_outputs=attach_prepare_outputs,
-            extract_prepare_duration_ms=extract_prepare_duration_ms,
-            write_bundle_state_snapshot=write_bundle_state_snapshot,
-            append_trace_event=append_trace_event,
-            finish_bundle_run=finish_bundle_run,
-            ms_since=ms_since,
-            audio_extensions=AUDIO_EXTENSIONS,
-            video_extensions=VIDEO_EXTENSIONS,
-            stdout=sys.stdout,
-        ),
+        deps=_local_command_deps(),
     )
 
 
@@ -1710,50 +1766,54 @@ def _extract_audio_from_video(video_path: Path, output_dir: Path) -> Path:
     return extract_audio_from_video_impl(video_path, output_dir)
 
 
+def _audio_command_deps() -> AudioCommandDependencies:
+    return AudioCommandDependencies(
+        ensure_file=ensure_file,
+        ensure_parent_dir=ensure_parent_dir,
+        humanize_path_title_hint=_humanize_path_title_hint,
+        audio_extensions=AUDIO_EXTENSIONS,
+        video_extensions=VIDEO_EXTENSIONS,
+        extract_audio_from_video=_extract_audio_from_video,
+        local_bundle_dir_for=local_bundle_dir_for,
+        bundle_paths=bundle_paths,
+        start_bundle_run=start_bundle_run,
+        write_json=write_json,
+        load_json=load_json,
+        whisper_json_to_transcript_markdown=whisper_json_to_transcript_markdown,
+        write_text=write_text,
+        normalize_transcript_text=normalize_transcript_text,
+        probe_media_duration_seconds=probe_media_duration_seconds,
+        choose_transcribe_backend=choose_transcribe_backend,
+        normalize_language_hint=normalize_language_hint,
+        call_groq_transcribe=call_groq_transcribe,
+        groq_payload_to_transcript_markdown=groq_payload_to_transcript_markdown,
+        groq_rate_limit_error=RateLimitError,
+        is_macos=is_macos,
+        parakeet_available=parakeet_available,
+        mlx_whisper_available=mlx_whisper_available,
+        ensure_audio_transcription_available=ensure_audio_transcription_available,
+        local_backend_language=local_backend_language,
+        run_whisperx_diarize=run_whisperx_diarize,
+        whisperx_json_to_transcript_markdown=whisperx_json_to_transcript_markdown,
+        run_mlx_whisper=run_mlx_whisper,
+        call_parakeet_transcribe=call_parakeet_transcribe,
+        call_transcribe_helper=call_transcribe_helper,
+        transcript_markdown_from_api_payload=transcript_markdown_from_api_payload,
+        run_prepare_for_transcript=run_prepare_for_transcript,
+        attach_prepare_outputs=attach_prepare_outputs,
+        extract_prepare_duration_ms=extract_prepare_duration_ms,
+        write_bundle_state_snapshot=write_bundle_state_snapshot,
+        append_trace_event=append_trace_event,
+        finish_bundle_run=finish_bundle_run,
+        ms_since=ms_since,
+        stderr=sys.stderr,
+    )
+
+
 def cmd_audio(args: argparse.Namespace) -> int:
     return run_audio_command(
         args,
-        deps=AudioCommandDependencies(
-            ensure_file=ensure_file,
-            ensure_parent_dir=ensure_parent_dir,
-            humanize_path_title_hint=_humanize_path_title_hint,
-            audio_extensions=AUDIO_EXTENSIONS,
-            video_extensions=VIDEO_EXTENSIONS,
-            extract_audio_from_video=_extract_audio_from_video,
-            local_bundle_dir_for=local_bundle_dir_for,
-            bundle_paths=bundle_paths,
-            start_bundle_run=start_bundle_run,
-            write_json=write_json,
-            load_json=load_json,
-            whisper_json_to_transcript_markdown=whisper_json_to_transcript_markdown,
-            write_text=write_text,
-            normalize_transcript_text=normalize_transcript_text,
-            probe_media_duration_seconds=probe_media_duration_seconds,
-            choose_transcribe_backend=choose_transcribe_backend,
-            normalize_language_hint=normalize_language_hint,
-            call_groq_transcribe=call_groq_transcribe,
-            groq_payload_to_transcript_markdown=groq_payload_to_transcript_markdown,
-            groq_rate_limit_error=RateLimitError,
-            is_macos=is_macos,
-            parakeet_available=parakeet_available,
-            mlx_whisper_available=mlx_whisper_available,
-            ensure_audio_transcription_available=ensure_audio_transcription_available,
-            local_backend_language=local_backend_language,
-            run_whisperx_diarize=run_whisperx_diarize,
-            whisperx_json_to_transcript_markdown=whisperx_json_to_transcript_markdown,
-            run_mlx_whisper=run_mlx_whisper,
-            call_parakeet_transcribe=call_parakeet_transcribe,
-            call_transcribe_helper=call_transcribe_helper,
-            transcript_markdown_from_api_payload=transcript_markdown_from_api_payload,
-            run_prepare_for_transcript=run_prepare_for_transcript,
-            attach_prepare_outputs=attach_prepare_outputs,
-            extract_prepare_duration_ms=extract_prepare_duration_ms,
-            write_bundle_state_snapshot=write_bundle_state_snapshot,
-            append_trace_event=append_trace_event,
-            finish_bundle_run=finish_bundle_run,
-            ms_since=ms_since,
-            stderr=sys.stderr,
-        ),
+        deps=_audio_command_deps(),
     )
 
 
@@ -1856,15 +1916,19 @@ def run_prepare_logic(input_files: list[Path], *, source_hints: dict | None = No
     return run_prepare_logic_impl(input_files, source_hints=source_hints, deps=_prepare_logic_deps())
 
 
+def _prepare_command_deps() -> PrepareCommandDependencies:
+    return PrepareCommandDependencies(
+        ensure_file=ensure_file,
+        run_prepare_logic=run_prepare_logic,
+        load_prepare_payload=load_prepare_payload,
+        stdout=sys.stdout,
+    )
+
+
 def cmd_prepare(args: argparse.Namespace) -> int:
     return run_prepare_command(
         args,
-        deps=PrepareCommandDependencies(
-            ensure_file=ensure_file,
-            run_prepare_logic=run_prepare_logic,
-            load_prepare_payload=load_prepare_payload,
-            stdout=sys.stdout,
-        ),
+        deps=_prepare_command_deps(),
     )
 
 
@@ -1872,14 +1936,18 @@ def build_status(work_dir: Path) -> dict:
     return build_status_payload(work_dir)
 
 
+def _status_command_deps() -> StatusCommandDependencies:
+    return StatusCommandDependencies(
+        ensure_dir=ensure_dir,
+        build_status=build_status,
+        stdout=sys.stdout,
+    )
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     return run_status_command(
         args,
-        deps=StatusCommandDependencies(
-            ensure_dir=ensure_dir,
-            build_status=build_status,
-            stdout=sys.stdout,
-        ),
+        deps=_status_command_deps(),
     )
 
 
@@ -1906,17 +1974,21 @@ def build_tldr_deterministically(work_dir: Path) -> dict:
     )
 
 
+def _tldr_command_deps() -> TldrCommandDependencies:
+    return TldrCommandDependencies(
+        ensure_dir=ensure_dir,
+        build_tldr_deterministically=build_tldr_deterministically,
+        bundle_dir_from_work_dir=bundle_dir_from_work_dir,
+        record_bundle_stage_metric=record_bundle_stage_metric,
+        ms_since=ms_since,
+        stdout=sys.stdout,
+    )
+
+
 def cmd_build_tldr(args: argparse.Namespace) -> int:
     return run_build_tldr_command(
         args,
-        deps=TldrCommandDependencies(
-            ensure_dir=ensure_dir,
-            build_tldr_deterministically=build_tldr_deterministically,
-            bundle_dir_from_work_dir=bundle_dir_from_work_dir,
-            record_bundle_stage_metric=record_bundle_stage_metric,
-            ms_since=ms_since,
-            stdout=sys.stdout,
-        ),
+        deps=_tldr_command_deps(),
     )
 
 
@@ -1934,17 +2006,21 @@ def build_deterministic_header(work_dir: Path) -> dict:
     )
 
 
+def _header_command_deps() -> HeaderCommandDependencies:
+    return HeaderCommandDependencies(
+        ensure_dir=ensure_dir,
+        build_deterministic_header=build_deterministic_header,
+        bundle_dir_from_work_dir=bundle_dir_from_work_dir,
+        record_bundle_stage_metric=record_bundle_stage_metric,
+        ms_since=ms_since,
+        stdout=sys.stdout,
+    )
+
+
 def cmd_build_header(args: argparse.Namespace) -> int:
     return run_build_header_command(
         args,
-        deps=HeaderCommandDependencies(
-            ensure_dir=ensure_dir,
-            build_deterministic_header=build_deterministic_header,
-            bundle_dir_from_work_dir=bundle_dir_from_work_dir,
-            record_bundle_stage_metric=record_bundle_stage_metric,
-            ms_since=ms_since,
-            stdout=sys.stdout,
-        ),
+        deps=_header_command_deps(),
     )
 
 
@@ -1952,20 +2028,24 @@ def replace_speakers(work_dir: Path) -> dict:
     return replace_speakers_impl(work_dir)
 
 
+def _replace_speakers_command_deps() -> ReplaceSpeakersCommandDependencies:
+    return ReplaceSpeakersCommandDependencies(
+        ensure_dir=ensure_dir,
+        replace_speakers=replace_speakers,
+        stage_sentinel_path=stage_sentinel_path,
+        write_stage_sentinel=write_stage_sentinel,
+        bundle_dir_from_work_dir=bundle_dir_from_work_dir,
+        record_bundle_stage_metric=record_bundle_stage_metric,
+        ms_since=ms_since,
+        iso_now=lambda: datetime.now().isoformat(),
+        stdout=sys.stdout,
+    )
+
+
 def cmd_replace_speakers(args: argparse.Namespace) -> int:
     return run_replace_speakers_command(
         args,
-        deps=ReplaceSpeakersCommandDependencies(
-            ensure_dir=ensure_dir,
-            replace_speakers=replace_speakers,
-            stage_sentinel_path=stage_sentinel_path,
-            write_stage_sentinel=write_stage_sentinel,
-            bundle_dir_from_work_dir=bundle_dir_from_work_dir,
-            record_bundle_stage_metric=record_bundle_stage_metric,
-            ms_since=ms_since,
-            iso_now=lambda: datetime.now().isoformat(),
-            stdout=sys.stdout,
-        ),
+        deps=_replace_speakers_command_deps(),
     )
 
 
@@ -1984,15 +2064,19 @@ def merge_manifest_parts(work_dir: Path) -> Path | None:
     return merge_manifest_parts_impl(work_dir, write_text=write_text)
 
 
+def _appendix_command_deps() -> AppendixCommandDependencies:
+    return AppendixCommandDependencies(
+        ensure_dir=ensure_dir,
+        merge_manifest_parts=merge_manifest_parts,
+        build_deterministic_appendix=build_deterministic_appendix,
+        stdout=sys.stdout,
+    )
+
+
 def cmd_ensure_appendix(args: argparse.Namespace) -> int:
     return run_ensure_appendix_command(
         args,
-        deps=AppendixCommandDependencies(
-            ensure_dir=ensure_dir,
-            merge_manifest_parts=merge_manifest_parts,
-            build_deterministic_appendix=build_deterministic_appendix,
-            stdout=sys.stdout,
-        ),
+        deps=_appendix_command_deps(),
     )
 
 
@@ -2084,83 +2168,86 @@ def cmd_assemble(args: argparse.Namespace) -> int:
 TEXT_EXTENSIONS = {".md", ".txt"}
 
 
+def _batch_command_deps() -> BatchCommandDependencies:
+    return BatchCommandDependencies(
+        ensure_parent_dir=ensure_parent_dir,
+        append_trace_event=append_trace_event,
+        process_batch_file=process_batch_file,
+        write_batch_indexes=write_batch_indexes,
+        cmd_local=cmd_local,
+        cmd_audio=cmd_audio,
+        audio_extensions=AUDIO_EXTENSIONS,
+        video_extensions=VIDEO_EXTENSIONS,
+        text_extensions=TEXT_EXTENSIONS,
+        write_json=write_json,
+        write_text=write_text,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    )
+
+
 def cmd_batch(args: argparse.Namespace) -> int:
     return run_batch_command(
         args,
-        deps=BatchCommandDependencies(
-            ensure_parent_dir=ensure_parent_dir,
-            append_trace_event=append_trace_event,
-            process_batch_file=process_batch_file,
-            write_batch_indexes=write_batch_indexes,
-            cmd_local=cmd_local,
-            cmd_audio=cmd_audio,
-            audio_extensions=AUDIO_EXTENSIONS,
-            video_extensions=VIDEO_EXTENSIONS,
-            text_extensions=TEXT_EXTENSIONS,
-            write_json=write_json,
-            write_text=write_text,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
-        ),
+        deps=_batch_command_deps(),
+    )
+
+
+def _doctor_command_deps() -> DoctorCommandDependencies:
+    return DoctorCommandDependencies(
+        build_doctor_checks=build_doctor_checks,
+        render_doctor_report=render_doctor_report,
+        platform=sys.platform,
+        python_version=sys.version.split()[0],
+        which=shutil.which,
+        groq_api_key_present=bool(os.environ.get("GROQ_API_KEY")),
+        skill_root=NOTES_SKILL_ROOT,
+        config_path=NOTES_CONFIG_PATH,
+        load_notes_config=load_notes_config,
+        env_flag_enabled=env_flag_enabled,
+        is_macos=is_macos,
+        parakeet_available=parakeet_available,
+        mlx_whisper_available=mlx_whisper_available,
+        python_module_available=python_module_available,
+        stdout=sys.stdout,
     )
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     return run_doctor_command(
         args,
-        deps=DoctorCommandDependencies(
-            build_doctor_checks=build_doctor_checks,
-            render_doctor_report=render_doctor_report,
-            platform=sys.platform,
-            python_version=sys.version.split()[0],
-            which=shutil.which,
-            groq_api_key_present=bool(os.environ.get("GROQ_API_KEY")),
-            skill_root=NOTES_SKILL_ROOT,
-            config_path=NOTES_CONFIG_PATH,
-            load_notes_config=load_notes_config,
-            env_flag_enabled=env_flag_enabled,
-            is_macos=is_macos,
-            parakeet_available=parakeet_available,
-            mlx_whisper_available=mlx_whisper_available,
-            python_module_available=python_module_available,
-            stdout=sys.stdout,
-        ),
+        deps=_doctor_command_deps(),
     )
+
+
+def command_handlers() -> dict[str, CommandHandler]:
+    return {
+        "prepare": cmd_prepare,
+        "status": cmd_status,
+        "replace-speakers": cmd_replace_speakers,
+        "build-tldr": cmd_build_tldr,
+        "build-header": cmd_build_header,
+        "ensure-appendix": cmd_ensure_appendix,
+        "assemble": cmd_assemble,
+        "youtube": cmd_youtube,
+        "local": cmd_local,
+        "audio": cmd_audio,
+        "telegram": cmd_telegram,
+        "auto": cmd_auto,
+        "batch": cmd_batch,
+        "doctor": cmd_doctor,
+    }
 
 
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     try:
-        if args.command == "batch":
-            return cmd_batch(args)
-        if args.command == "prepare":
-            return cmd_prepare(args)
-        if args.command == "status":
-            return cmd_status(args)
-        if args.command == "replace-speakers":
-            return cmd_replace_speakers(args)
-        if args.command == "build-tldr":
-            return cmd_build_tldr(args)
-        if args.command == "build-header":
-            return cmd_build_header(args)
-        if args.command == "ensure-appendix":
-            return cmd_ensure_appendix(args)
-        if args.command == "assemble":
-            return cmd_assemble(args)
-        if args.command == "youtube":
-            return cmd_youtube(args)
-        if args.command == "local":
-            return cmd_local(args)
-        if args.command == "audio":
-            return cmd_audio(args)
-        if args.command == "telegram":
-            return cmd_telegram(args)
-        if args.command == "auto":
-            return cmd_auto(args)
-        if args.command == "doctor":
-            return cmd_doctor(args)
-        parser.error(f"Unsupported command: {args.command}")
+        return dispatch_command(
+            args,
+            handlers=command_handlers(),
+            parser_error=parser.error,
+        )
     except KeyboardInterrupt:
         print("Cancelled.", file=sys.stderr)
         return 130

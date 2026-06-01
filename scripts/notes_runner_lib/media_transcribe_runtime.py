@@ -185,11 +185,8 @@ def normalize_transcript_text(text: str) -> str:
 
 
 def copy_local_source(source_path: Path, bundle_dir: Path) -> Path:
-    source_dir = bundle_dir / "source"
-    source_dir.mkdir(parents=True, exist_ok=True)
-    destination = source_dir / source_path.name
-    shutil.copy2(source_path, destination)
-    return destination
+    del bundle_dir
+    return source_path
 
 
 def _fallback_run_checked(

@@ -4,6 +4,17 @@
 
 Works on **macOS**, **Linux**, and **WSL**.
 
+## Project
+
+Notes Skill is a local-first study-notes pipeline for agent clients such as Codex.
+It keeps source ingestion, transcript preparation, extraction prompts, final HTML/Markdown assembly, and delivery checks in one reproducible repo.
+
+It is designed for:
+- long YouTube lectures and interviews
+- local transcripts, audio, and video files
+- batch course folders
+- recoverable agent runs with inspectable `run.json`, `trace.jsonl`, and stage files
+
 ## Install
 
 Fastest install:
@@ -135,7 +146,7 @@ notes-runner status "$WORK_DIR" --json
 
 Safe local smoke-check without Telegram side effects:
 
-Use this only for local debug/smoke work. It is not the normal completion path for a user-facing `/notes` run; the standard result includes Telegram delivery.
+Use this only for local debug/smoke work. It is not the normal completion path for a user-facing `/notes` run when Telegram delivery is configured.
 
 ```bash
 NOTES_RUNNER_DISABLE_TELEGRAM=1 notes-runner assemble "$WORK_DIR" "$OUTPUT_MD" "$OUTPUT_HTML" "$TITLE" --skip-telegram --json
@@ -162,8 +173,7 @@ See [ADVANCED.md](ADVANCED.md) for:
 - Telegram voice messages
 - Telegram auto-delivery
 
-By default, generated notes are auto-delivered to the Telegram channel `Конспекты` (`-1003850136767`) when a compatible `digest-runner` is available.
-Use `config.json` only if you want to override that target or disable delivery for this machine.
+Telegram auto-delivery is opt-in. To enable it, copy `config.example.json` to your local `config.json`, set `"enabled": true`, and provide your own chat target.
 
 ## Safety note
 

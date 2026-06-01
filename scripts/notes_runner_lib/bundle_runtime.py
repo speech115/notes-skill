@@ -20,7 +20,7 @@ TIMELINE_FILENAME = "timeline.jsonl"
 RUNS_DIRNAME = "runs"
 DEFAULT_TELEGRAM_MCP_URL = "http://127.0.0.1:8799/mcp"
 DEFAULT_TELEGRAM_CAPTION_TEMPLATE = ""
-DEFAULT_TELEGRAM_CHAT = "-1003850136767"
+DEFAULT_TELEGRAM_CHAT = ""
 
 
 def bundle_paths(bundle_dir: Path) -> dict[str, Path]:
@@ -129,7 +129,7 @@ def render_caption(template: str, *, title: str, output_html: Path, context: dic
 
 def load_notes_config(config_path: Path) -> dict:
     default_delivery = {
-        "enabled": True,
+        "enabled": False,
         "chat": DEFAULT_TELEGRAM_CHAT,
         "mcp_url": DEFAULT_TELEGRAM_MCP_URL,
         "parse_mode": "md",
@@ -153,8 +153,6 @@ def load_notes_config(config_path: Path) -> dict:
         raise ValueError("notes config field 'telegram_delivery' must be a JSON object")
     merged_delivery = dict(default_delivery)
     merged_delivery.update(raw_delivery)
-    if not str(merged_delivery.get("chat") or "").strip():
-        merged_delivery["chat"] = DEFAULT_TELEGRAM_CHAT
     merged["telegram_delivery"] = merged_delivery
     return merged
 
@@ -180,7 +178,7 @@ def effective_telegram_chat(
     delivery = config.get("telegram_delivery")
     if not isinstance(delivery, dict) or not delivery.get("enabled", False):
         return None
-    chat = str(delivery.get("chat") or "").strip() or DEFAULT_TELEGRAM_CHAT
+    chat = str(delivery.get("chat") or "").strip()
     return chat or None
 
 
@@ -257,7 +255,7 @@ def deliver_html_to_telegram(
             delivery = {}
         if not delivery.get("enabled", False):
             return build_telegram_delivery_disabled("disabled")
-        chat = str(delivery.get("chat") or "").strip() or DEFAULT_TELEGRAM_CHAT
+        chat = str(delivery.get("chat") or "").strip()
         if not chat:
             return {
                 "enabled": True,

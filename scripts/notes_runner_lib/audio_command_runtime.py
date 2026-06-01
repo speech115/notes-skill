@@ -113,12 +113,6 @@ def _cmd_audio_inner(
     )
 
     try:
-        source_dir = bundle_dir / "source"
-        source_dir.mkdir(parents=True, exist_ok=True)
-        source_copy = source_dir / source_path.name
-        if not source_copy.exists() or args.refresh:
-            shutil.copy2(source_path, source_copy)
-
         deps.write_json(
             paths["metadata"],
             {
@@ -297,7 +291,8 @@ def _cmd_audio_inner(
             "source_kind": "video" if is_video else "audio",
             "source_path": str(source_path),
             "source_name": source_path.name,
-            "source_copy_path": str(source_copy),
+            "source_copy_path": None,
+            "source_retained": False,
             "title_hint": source_path.stem,
             "metadata_path": str(paths["metadata"]),
             "transcript_path": str(transcript_path),

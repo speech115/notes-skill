@@ -1,7 +1,7 @@
 {
   "telegram_delivery": {
-    "enabled": true,
-    "chat": "-1003850136767",
+    "enabled": false,
+    "chat": "@your_channel_or_chat_id",
     "mcp_url": "http://127.0.0.1:8799/mcp",
     "parse_mode": "md"
   }

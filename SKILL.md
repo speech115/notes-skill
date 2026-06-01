@@ -1,6 +1,6 @@
 ---
 name: notes
-description: Create detailed study notes from YouTube videos, local media, or local transcripts. Use when the user says 'сделай конспект', 'конспект', 'законспектируй', 'notes', 'заметки по видео', or provides a YouTube URL and asks for a summary/notes. Also triggers on /notes.
+description: Create detailed study notes from YouTube videos, local media, or local transcripts. Use only when the user explicitly asks to make notes/a конспект through notes, names the notes skill, or runs /notes. Do not use for ordinary summaries, YouTube links, or конспект requests that do not explicitly mention notes.
 argument-hint: <youtube-url-or-absolute-path>
 user-invocable: true
 metadata:
@@ -9,7 +9,9 @@ metadata:
 
 # /notes — detailed study notes
 
-Triggers automatically when the user asks to create notes/конспект, or explicitly runs `/notes ...`.
+Triggers only when the user directly asks to use `notes` for notes/конспект, names the `notes` skill, or explicitly runs `/notes ...`.
+
+Do not activate this skill for ordinary summary requests, bare YouTube URLs, or generic `сделай конспект` / `законспектируй` requests unless the user explicitly says to use `notes`.
 
 This is a local agent skill, not an app project.
 
